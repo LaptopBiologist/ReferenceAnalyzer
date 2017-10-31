@@ -83,25 +83,43 @@ def ComputeKmerCompositionEntropy(sequence,k=6):
     and interpretable summary. """
 
     kmer_counts=CountKMERS(sequence, k)
-    p=1./(4**k)
+    num_poss_kmers=(4.**k)
+    pr=1./num_poss_kmers
     num_kmers=sum(kmer_counts.values())
+    obs=kmer_counts.values()+[0]* (int(num_poss_kmers-len(kmer_counts.keys())))
+##    print len(obs)
+##    print kmer_counts.values()
+##    print num_kmers
+    prob=numpy.log( scipy.special.binom(num_poss_kmers, len(kmer_counts.keys()))) + scipy.stats.multinomial.logpmf(obs, num_kmers, [pr]*int( num_poss_kmers))
+##    print prob
+##    print entropy
+##    print num_poss_kmers, , num_kmers
     entropy=0
-    for kmer in kmer_counts:
-        binom_p=scipy.stats.binom.pmf(kmer_counts[kmer], num_kmers, p)
-        normalizer=1.-scipy.stats.binom.cdf(0, num_kmers, p)
-        prob=binom_p/normalizer
-        print prob
-        if prob!=0:
-            entropy+=-1*prob*numpy.log(prob)
-    return entropy/len(kmer_counts)
+##    prob=OccupancyProbability(num_poss_kmers, float( len(kmer_counts.keys())), num_kmers  )
+##    print prob
+    if prob!=0:
+        entropy-=prob
+    return entropy/(num_kmers)
+
+def OccupancyProbability(n, i, k):
+    n=float(n)
+    i=float(i)
+    k=float(k)
+    j=n-i
+    n_j=n-j
+    m=numpy.arange(n_j)
+    coef_1=scipy.special.binom(n, j)
+    coef_2=(-1)**(m)* scipy.special.binom(n-j, m)*(1.-(j+m)/n)**k
+    return coef_1*coef_2.sum()
+
 
 def SplitFastaByEntropy(infile, outfile):
     low_outhandle=open(outfile+'_low.fa', 'w')
     high_outhandle=open(outfile+'_high.fa', 'w')
     seqs=GetSeq(infile, upper=True)
     for key in seqs.keys():
-        entropy=ComputeKmerCompositionEntropy(seqs[key])
-        if entropy<.01:
+        entropy=ComputeKmerCompositionEntropy(seqs[key],5)
+        if entropy<2:
             low_outhandle.write('>{0}_entropy={1}\n'.format(key, entropy))
             low_outhandle.write('{0}\n'.format(seqs[key]))
         else:
