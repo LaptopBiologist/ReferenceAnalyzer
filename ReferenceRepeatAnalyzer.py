@@ -13,7 +13,7 @@ import scipy
 from Bio import SeqIO
 from Bio import Seq
 import matplotlib
-matplotlib.use('Agg')
+##matplotlib.use('Agg')
 from matplotlib import pyplot
 from statsmodels.tsa import stattools
 from statsmodels.tsa.stattools import acf
@@ -27,6 +27,7 @@ from sklearn.base import BaseEstimator
 from Bio import Seq
 from matplotlib import pyplot
 import seaborn
+import itertools
 
 import gzip
 
@@ -67,6 +68,47 @@ class RollingKernelAverage(BaseEstimator):
         mean=self.predict(X)
         return -1*((mean-Y)**2).sum()
 
+
+def CountSequences(k=6, alphabet='ATGC'):
+    """Enumerate all possible k-length products of the alphabet and then
+    removes redundancies. Returns the cardinality."""
+    sequences=itertools.product(alphabet, repeat=k)
+    return list(sequences)
+
+def ComputeKmerCompositionEntropy(sequence,k=6):
+    """Summarize the complexity of a repeat unit by decomposing it into kmers
+    and then modeling the expected counts of each observed kmer with a zero-
+    truncated binomial distribution where p=1/(4**k). This is not perfect,
+    as the kmer counts are not independent--the kmers are overlapping--but it provides
+    and interpretable summary. """
+
+    kmer_counts=CountKMERS(sequence, k)
+    p=1./(4**k)
+    num_kmers=sum(kmer_counts.values())
+    entropy=0
+    for kmer in kmer_counts:
+        binom_p=scipy.stats.binom.pmf(kmer_counts[kmer], num_kmers, p)
+        normalizer=1.-scipy.stats.binom.cdf(0, num_kmers, p)
+        prob=binom_p/normalizer
+        print prob
+        if prob!=0:
+            entropy+=-1*prob*numpy.log(prob)
+    return entropy/len(kmer_counts)
+
+def SplitFastaByEntropy(infile, outfile):
+    low_outhandle=open(outfile+'_low.fa', 'w')
+    high_outhandle=open(outfile+'_high.fa', 'w')
+    seqs=GetSeq(infile, upper=True)
+    for key in seqs.keys():
+        entropy=ComputeKmerCompositionEntropy(seqs[key])
+        if entropy<.01:
+            low_outhandle.write('>{0}_entropy={1}\n'.format(key, entropy))
+            low_outhandle.write('{0}\n'.format(seqs[key]))
+        else:
+            high_outhandle.write('>{0}_entropy={1}\n'.format(key, entropy))
+            high_outhandle.write('{0}\n'.format(seqs[key]))
+    high_outhandle.close()
+    low_outhandle.close()
 def Epanichenikov(u):
     k=.75*(1-u**2)*(abs(u)<=1)
     return k
@@ -76,6 +118,19 @@ def GetKMERS(sequence, k=10 ):
     kmerSet=set()
     for x in range(len(sequence)-k+1):
         kmerSet.add(str(sequence[x:x+k]))
+##        kmerSet.add(str(complement[x:x+k]))
+    return list(kmerSet)
+
+
+def CountKMERS(sequence, k=10 ):
+##    complement=str(Seq.Seq( sequence).reverse_complement())
+    kmerSet={}
+    for x in range(0,len(sequence)-k+1):
+        kmer=str(sequence[x:x+k])
+        if kmerSet.has_key(kmer)==False:
+            kmerSet[kmer]=0.
+        kmerSet[kmer]+=1
+    return kmerSet
 ##        kmerSet.add(str(complement[x:x+k]))
     return list(kmerSet)
 
