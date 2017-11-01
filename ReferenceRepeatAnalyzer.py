@@ -75,31 +75,44 @@ def CountSequences(k=6, alphabet='ATGC'):
     sequences=itertools.product(alphabet, repeat=k)
     return list(sequences)
 
-def ComputeKmerCompositionEntropy(sequence,k=6):
+def ComputeKmerCompositionEntropy(sequence,k=5):
     """Summarize the complexity of a repeat unit by decomposing it into kmers
-    and then modeling the expected counts of each observed kmer with a zero-
-    truncated binomial distribution where p=1/(4**k). This is not perfect,
-    as the kmer counts are not independent--the kmers are overlapping--but it provides
-    and interpretable summary. """
+    and then modeling the expected counts of each observed kmer with a multinomial distribution.
+    The multinomial probability is multiplied by the number of possible sets of kmers
+    the same size as the observed set (the binomial coefficient), because we don't care at all about the
+    identity of the kmers. This kept in log-space to avoid precision errors.
+    The log-probability is divided by the number of kmers the sequence was decomposed into.
 
+    Note: the binom coefficient becomes imprecise for k>5; 5-mers though provides
+    a reasonable summary of sequece complexity."""
+
+    #Decompose the sequence into kmer counts
     kmer_counts=CountKMERS(sequence, k)
+
+    #Number of kmers possible
     num_poss_kmers=(4.**k)
+
+    #Assume each kmer is equally likely
     pr=1./num_poss_kmers
+
+    #The number of kmers contained in the sequence
     num_kmers=sum(kmer_counts.values())
+
     obs=kmer_counts.values()+[0]* (int(num_poss_kmers-len(kmer_counts.keys())))
-##    print len(obs)
-##    print kmer_counts.values()
-##    print num_kmers
-    prob=numpy.log( scipy.special.binom(num_poss_kmers, len(kmer_counts.keys()))) + scipy.stats.multinomial.logpmf(obs, num_kmers, [pr]*int( num_poss_kmers))
-##    print prob
-##    print entropy
-##    print num_poss_kmers, , num_kmers
-    entropy=0
-##    prob=OccupancyProbability(num_poss_kmers, float( len(kmer_counts.keys())), num_kmers  )
-##    print prob
-    if prob!=0:
-        entropy-=prob
-    return entropy/(num_kmers)
+
+    #Multiply the probablity by the binomial coefficient: Don't care which kmers are enriched!
+    #In log space, this means add the logs
+    logprob=numpy.log( scipy.special.binom(num_poss_kmers, len(kmer_counts.keys()))) + scipy.stats.multinomial.logpmf(obs, num_kmers, [pr]*int( num_poss_kmers))
+
+    information=0
+
+    if logprob!=0:
+        information=-1*logprob
+    else:
+        information=numpy.inf
+
+    #Output average information per kmer
+    return information/(num_kmers)
 
 def OccupancyProbability(n, i, k):
     n=float(n)
