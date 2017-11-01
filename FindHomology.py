@@ -41,21 +41,32 @@ def MakeDir(newdir):
     if os.path.exists(newdir)==False:
         os.mkdir(newdir)
 
-def GetSeq(ref, parser='fasta', gzipped=False, clean_name=True):
-    if gzipped==False:
-        handle=open(ref, 'r')
+
+
+def GetSeq(ref, upper=False, rename=False, clean_name=True):
+
+    """Reads a fasta, returns of a dictionary of strings keyed by entry name."""
+    if ref.split('.')[-1]=='gz':
+        handle=gzip.open(ref )
     else:
-        handle=gzip.open(ref)
-    lib=SeqIO.parse(handle, parser)
+        handle=open(ref, 'r')
+    lib=SeqIO.parse(handle, 'fasta')
     SeqLen={}
     for rec in lib:
-        #if refName.count(rec.name)==0: continue
-        if clean_name==True:
-            SeqLen[CleanName(rec.name)]=rec
+##        if refName.count(rec.name)==0: continue
+        if rename==True:
+            name=rec.description.split(' ')[1].split('=')[1]
+            print name
+            SeqLen[CleanName(name)]=str( rec.seq)
         else:
-            SeqLen[rec.name]=rec
+            if clean==True:
+                SeqLen[CleanName(rec.name)]=str( rec.seq)
+            else:
+                SeqLen[rec.name]=str( rec.seq)
+        if upper==True: SeqLen[CleanName(rec.name)]=SeqLen[CleanName(rec.name)].upper()
     handle.close()
     return SeqLen
+
 
 def CleanName(name):
     illegal=['|', '!','>', '<', '?','/','*']
