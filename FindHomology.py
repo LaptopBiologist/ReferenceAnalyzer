@@ -26,6 +26,8 @@ from Bio import SearchIO
 from Bio import SeqIO
 from Bio import Seq
 from Bio import SeqRecord
+import scipy
+import scipy.stats
 
 
 class alignment():
@@ -59,7 +61,7 @@ def GetSeq(ref, upper=False, rename=False, clean_name=True):
             print name
             SeqLen[CleanName(name)]=str( rec.seq)
         else:
-            if clean==True:
+            if clean_name==True:
                 SeqLen[CleanName(rec.name)]=str( rec.seq)
             else:
                 SeqLen[rec.name]=str( rec.seq)
@@ -366,6 +368,68 @@ def ClusterByLengths(indir, outfile):
             outhandle.write('{0}\n'.format(str(sequences[key].seq)))
     outhandle.close()
 
+def FilterLowComplexityRepeatsFromFasta(indir, outfile, ignore=''):
+    file_list=os.listdir(indir)
+
+    if ignore!='':
+        ignore_list=ReadIgnoreFile(ignore)
+    else:
+        ignore_list=[]
+    outhandle=open(outfile, 'w')
+    for f in file_list:
+        file_root='.'.join( f.split('.')[:-1])
+        #Add all singletons to the output
+        if f=='singletons.fa':
+            sequences=GetSeq(indir+'/'+f, clean_name=False)
+            for key in sequences.keys():
+                outhandle.write('>{0}\n'.format(key))
+                outhandle.write('{0}\n'.format(sequences[key]))
+            continue
+        if f.split('_')[0]!='community':continue
+        if ignore_list.count(  file_root.split('_')[1])!=0:continue
+        sequences=GetSeq(indir+'/'+f, clean_name=False)
+        clusters=RemoveLowComplexityRepeats(sequences)
+        for key in clusters:
+            outhandle.write('>{0}\n'.format(key))
+            outhandle.write('{0}\n'.format(sequences[key]))
+    outhandle.close()
+
+def RemoveLowComplexityRepeats(sequences):
+    #Set the threshold equal twice the information of the most complex repeat
+    information_threshold=min( CheckSequenceInformation(sequences))*2
+    complex_sequences={}
+    for key in sequences.keys():
+        information=(float( key.split('_')[-1].split('=')[-1]))
+        if information<=information_threshold:
+            complex_sequences[key]=sequences[key]
+    return complex_sequences
+
+
+def CheckSequenceInformation(sequences):
+    #First identify the lowest information sequence:
+    information_list=[]
+    for key in sequences.keys():
+        information_list.append(float( key.split('_')[-1].split('=')[-1]))
+    return information_list
+
+
+def ReadIgnoreFile(infile):
+    """Parses a file indicating which communities should be skipped by
+    RemoveLowComplexityRepeats.
+
+    The numbers of communities to skip should be separated by commas
+    Lines beginning with # will be treated as comments and skipped
+    (eg providing justification for skipping these communities).
+    """
+    ignore_list=[]
+    inhandle=open(infile, 'r')
+    for line in inhandle:
+        #Skip comments
+        if line[0]=='#': continue
+        ignore_list+=line.split(',')
+
+    inhandle.close()
+    return ignore_list
 def FilterByLengths(infile, outfile, cutoff=100):
     sequences=GetSeq(infile, clean_name=False)
     outhandle=open(outfile, 'w')
@@ -488,6 +552,18 @@ def SplitFastaByEntropy(infile, outfile):
             high_outhandle.write('{0}\n'.format(seqs[key]))
     high_outhandle.close()
     low_outhandle.close()
+
+def LabelFastaWithEntropy(infile, outfile):
+    outhandle=open(outfile, 'w')
+
+    seqs=GetSeq(infile, upper=True)
+    for key in seqs.keys():
+        entropy=ComputeKmerCompositionEntropy(seqs[key],5)
+
+        outhandle.write('>{0}_entropy={1}\n'.format(key, entropy))
+        outhandle.write('{0}\n'.format(seqs[key]))
+    outhandle.close()
+
 
 def main(argv):
     param={}
