@@ -75,44 +75,6 @@ def CountSequences(k=6, alphabet='ATGC'):
     sequences=itertools.product(alphabet, repeat=k)
     return list(sequences)
 
-def ComputeKmerCompositionEntropy(sequence,k=5):
-    """Summarize the complexity of a repeat unit by decomposing it into kmers
-    and then modeling the expected counts of each observed kmer with a multinomial distribution.
-    The multinomial probability is multiplied by the number of possible sets of kmers
-    the same size as the observed set (the binomial coefficient), because we don't care at all about the
-    identity of the kmers. This kept in log-space to avoid precision errors.
-    The log-probability is divided by the number of kmers the sequence was decomposed into.
-
-    Note: the binom coefficient becomes imprecise for k>5; 5-mers though provides
-    a reasonable summary of sequece complexity."""
-
-    #Decompose the sequence into kmer counts
-    kmer_counts=CountKMERS(sequence, k)
-
-    #Number of kmers possible
-    num_poss_kmers=(4.**k)
-
-    #Assume each kmer is equally likely
-    pr=1./num_poss_kmers
-
-    #The number of kmers contained in the sequence
-    num_kmers=sum(kmer_counts.values())
-
-    obs=kmer_counts.values()+[0]* (int(num_poss_kmers-len(kmer_counts.keys())))
-
-    #Multiply the probablity by the binomial coefficient: Don't care which kmers are enriched!
-    #In log space, this means add the logs
-    logprob=numpy.log( scipy.special.binom(num_poss_kmers, len(kmer_counts.keys()))) + scipy.stats.multinomial.logpmf(obs, num_kmers, [pr]*int( num_poss_kmers))
-
-    information=0
-
-    if logprob!=0:
-        information=-1*logprob
-    else:
-        information=numpy.inf
-
-    #Output average information per kmer
-    return information/(num_kmers)
 
 def OccupancyProbability(n, i, k):
     n=float(n)
@@ -126,20 +88,6 @@ def OccupancyProbability(n, i, k):
     return coef_1*coef_2.sum()
 
 
-def SplitFastaByEntropy(infile, outfile):
-    low_outhandle=open(outfile+'_low.fa', 'w')
-    high_outhandle=open(outfile+'_high.fa', 'w')
-    seqs=GetSeq(infile, upper=True)
-    for key in seqs.keys():
-        entropy=ComputeKmerCompositionEntropy(seqs[key],5)
-        if entropy<2:
-            low_outhandle.write('>{0}_entropy={1}\n'.format(key, entropy))
-            low_outhandle.write('{0}\n'.format(seqs[key]))
-        else:
-            high_outhandle.write('>{0}_entropy={1}\n'.format(key, entropy))
-            high_outhandle.write('{0}\n'.format(seqs[key]))
-    high_outhandle.close()
-    low_outhandle.close()
 def Epanichenikov(u):
     k=.75*(1-u**2)*(abs(u)<=1)
     return k
@@ -153,17 +101,7 @@ def GetKMERS(sequence, k=10 ):
     return list(kmerSet)
 
 
-def CountKMERS(sequence, k=10 ):
-##    complement=str(Seq.Seq( sequence).reverse_complement())
-    kmerSet={}
-    for x in range(0,len(sequence)-k+1):
-        kmer=str(sequence[x:x+k])
-        if kmerSet.has_key(kmer)==False:
-            kmerSet[kmer]=0.
-        kmerSet[kmer]+=1
-    return kmerSet
-##        kmerSet.add(str(complement[x:x+k]))
-    return list(kmerSet)
+
 
 def GetSeq(ref, upper=False, rename=False, clean=True):
 
