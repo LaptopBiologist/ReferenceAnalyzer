@@ -20,7 +20,7 @@ import numpy
 import seaborn
 import matplotlib
 from matplotlib import pyplot
-
+import SeqManipulations
 import Bio
 from Bio import SearchIO
 from Bio import SeqIO
@@ -498,7 +498,11 @@ def ComputeKmerCompositionEntropy(sequence,k=5):
     Note: the binom coefficient becomes imprecise for k>5; 5-mers though provides
     a reasonable summary of sequece complexity."""
 
+    #Replace ambiguous nucleotides with one of the nucleotides they represent
+    sequence=SeqManipulations.ReplaceAmbiguousNucleotides(sequence)
+
     #Decompose the sequence into kmer counts
+
     kmer_counts=CountKMERS(sequence, k)
 
     #Number of kmers possible
@@ -514,8 +518,13 @@ def ComputeKmerCompositionEntropy(sequence,k=5):
 
     #Multiply the probablity by the binomial coefficient: Don't care which kmers are enriched!
     #In log space, this means add the logs
-    logprob=numpy.log( scipy.special.binom(num_poss_kmers, len(kmer_counts.keys()))) + scipy.stats.multinomial.logpmf(obs, num_kmers, [pr]*int( num_poss_kmers))
 
+    try:
+        logprob=numpy.log( scipy.special.binom(num_poss_kmers, len(kmer_counts.keys()))) + scipy.stats.multinomial.logpmf(obs, num_kmers, [pr]*int( num_poss_kmers))
+    except:
+        print kmer_counts
+        print len(kmer_counts.values())
+        print jabber
     information=0
 
     if logprob!=0:
@@ -524,7 +533,7 @@ def ComputeKmerCompositionEntropy(sequence,k=5):
         information=numpy.inf
 
     #Output average information per kmer
-    return information/(num_kmers)
+    return information/ num_kmers#len(kmer_counts.keys())#@, len(kmer_counts.keys())/num_kmers
 
 def CountKMERS(sequence, k=10 ):
     """Decomposes sequence into kmers."""
