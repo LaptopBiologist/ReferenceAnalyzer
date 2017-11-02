@@ -386,8 +386,13 @@ def FilterLowComplexityRepeatsFromFasta(indir, outfile, ignore=''):
                 outhandle.write('{0}\n'.format(sequences[key]))
             continue
         if f.split('_')[0]!='community':continue
-        if ignore_list.count(  file_root.split('_')[1])!=0:continue
         sequences=GetSeq(indir+'/'+f, clean_name=False)
+
+        if ignore_list.count(  file_root.split('_')[1])!=0:
+            for key in sequences.keys():
+                outhandle.write('>{0}\n'.format(key))
+                outhandle.write('{0}\n'.format(sequences[key]))
+            continue
         clusters=RemoveLowComplexityRepeats(sequences)
         for key in clusters:
             outhandle.write('>{0}\n'.format(key))
@@ -533,7 +538,7 @@ def ComputeKmerCompositionEntropy(sequence,k=5):
         information=numpy.inf
 
     #Output average information per kmer
-    return information/ num_kmers#len(kmer_counts.keys())#@, len(kmer_counts.keys())/num_kmers
+    return information/ (num_kmers+k)#len(kmer_counts.keys())#@, len(kmer_counts.keys())/num_kmers
 
 def CountKMERS(sequence, k=10 ):
     """Decomposes sequence into kmers."""
