@@ -358,14 +358,14 @@ def ClusterByLengths(indir, outfile):
             sequences=GetSeq(indir+'/'+f, clean_name=False)
             for key in sequences.keys():
                 outhandle.write('>{0}\n'.format(key))
-                outhandle.write('{0}\n'.format(str(sequences[key].seq)))
+                outhandle.write('{0}\n'.format(str(sequences[key])))
             continue
         if f.split('_')[0]!='community':continue
         sequences=GetSeq(indir+'/'+f, clean_name=False)
         hc, clusters=HierarchicalCluster(sequences)
         for key in clusters:
             outhandle.write('>{0}\n'.format(key))
-            outhandle.write('{0}\n'.format(str(sequences[key].seq)))
+            outhandle.write('{0}\n'.format(str(sequences[key])))
     outhandle.close()
 
 def FilterLowComplexityRepeatsFromFasta(indir, outfile, ignore=''):
@@ -469,11 +469,8 @@ def HierarchicalCluster(sequences):
 
     retained_keys=[]
     for c in clusters:
-        try:
-            counts=numpy.array( [float(k.split('_')[-1].split('=')[-1]) for k in c])
-        except:
-            print k
-            print jabber
+        counts=numpy.array( [float( SeqManipulations.ParseSeqName(k)['counts'] ) for k in c])
+
         best_ind=numpy.argmax(counts)
         retained_keys.append(c[best_ind])
 
@@ -538,7 +535,7 @@ def ComputeKmerCompositionEntropy(sequence,k=5):
         information=numpy.inf
 
     #Output average information per kmer
-    return information/ (num_kmers+k)#len(kmer_counts.keys())#@, len(kmer_counts.keys())/num_kmers
+    return information/ (num_kmers)#len(kmer_counts.keys())#@, len(kmer_counts.keys())/num_kmers
 
 def CountKMERS(sequence, k=10 ):
     """Decomposes sequence into kmers."""

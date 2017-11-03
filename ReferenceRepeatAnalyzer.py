@@ -21,7 +21,7 @@ import sklearn
 import sklearn.gaussian_process
 import sklearn.kernel_ridge
 import sklearn.metrics
-
+import SeqManipulations
 import sklearn.gaussian_process.kernels as kernels
 from sklearn.base import BaseEstimator
 from Bio import Seq
@@ -349,12 +349,10 @@ def ClusterFASTA(infile, outfile):
             count_dict[length]=[]
             chr_dict[length]=[]
         length_dict[length].append(sequences[key])
-        try:
-            counts=float(key.split('_')[-1].split('=')[-1])
-            chrom=key.split('_')[0]
-        except:
-            print key
-            print jab
+
+        counts=float(SeqManipulations.ParseSeqName(key)['count'])
+        chrom=key.split('_')[0]
+
         count_dict[length].append(counts)
         chr_dict[length].append(chrom)
 
@@ -441,9 +439,11 @@ def ClusterFASTA(infile, outfile):
 ##    else:
 ##        return consensus_list, counter, chr_list
 
+
+
 def ClusterSet(sequences, threshold=.8, len_list=[],chr_names=[]):
     clusters=[]
-    print len(sequences)
+##    print len(sequences)
     return_chr=chr_names!=[]
     terminate=False
     count=0

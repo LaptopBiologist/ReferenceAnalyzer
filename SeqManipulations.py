@@ -28,6 +28,16 @@ def ReplaceAmbiguousNucleotides(sequence):
         replacement_nt=numpy.random.choice(IUPAC_DICT[ambiguous_nt], size=len(amb_ind), replace=True)
         seq_array[amb_ind]=replacement_nt
     return ''.join(seq_array)
+
+def ParseSeqName(seq_name):
+    level_1=seq_name.split("_")
+    info_dict={}
+    for field in level_1:
+        info=field.split('=')
+        if len(info)==2:
+            info_dict[info[0]]=info[1]
+    return info_dict
+
 def main():
     pass
 
