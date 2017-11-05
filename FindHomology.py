@@ -571,7 +571,7 @@ def LabelFastaWithEntropy(infile, outfile):
     for key in seqs.keys():
         entropy=ComputeKmerCompositionEntropy(seqs[key],5)
 
-        outhandle.write('>{0}_entropy={1}\n'.format(key, entropy))
+        outhandle.write('>{0}_information={1}\n'.format(key, entropy))
         outhandle.write('{0}\n'.format(seqs[key]))
     outhandle.close()
 

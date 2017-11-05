@@ -620,6 +620,117 @@ def SubstractSignal(signal, periodicity):
 ####    autocorr[(p_AT>.01)*(p_GC>.01)]=0.
 ##    return autocorr
 
+def SeqToComplex(seq):
+    char_array=numpy.fromstring(seq.upper(), '|S1')
+    char_array[char_array!='N']
+##    return LaggedIdentity(seq_array, max_size)
+##    AT=numpy.array([0]*len(seq_array))
+##    GC=numpy.array([0]*len(seq_array))
+##    AT[(seq_array=='A')]=1
+##    AT[(seq_array=='T')]=-1
+##    GC[(seq_array=='G')]=1
+##    GC[(seq_array=='C')]=-1
+
+    seq_array=numpy.array([0.]*len(char_array), 'complex')
+    #A/T is the real plane
+    seq_array[char_array=='A']+=1
+    seq_array[char_array=='T']-=1
+
+    #G/C is the imaginary plane
+    seq_array[char_array=='G']+=1j
+    seq_array[char_array=='C']-=-1j
+    return seq_array
+
+def CCF(sig1, sig2):
+    fft_1=scipy.fft(sig1)
+    fft_2=scipy.fft(sig2)
+    CCF=fft_1*numpy.conj(fft_2)
+    return CCF
+
+
+def ShiftedIdentity(target, repeat_len):
+    """Compares a sequence with a shifted version of itself. Good for visualizing"""
+
+    seq_array=numpy.fromstring(target, '|S1')
+    matches=(seq_array[:-repeat_len] == seq_array[repeat_len:])
+    smoothing_kernel=[1./repeat_len]*repeat_len
+    perc_id=scipy.signal.fftconvolve(smoothing_kernel, matches)
+    return perc_id
+
+
+def IdentifyHighIdentityRegions(identity, threshold):
+    indices=numpy.where(identity>=threshold)[0]
+    indices=numpy.array([0]+list(indices)+[len(identity)-1])
+
+    diff_ind=numpy.diff(indices)
+
+    splits=numpy.where(diff_ind>1)[0]
+    intervals=[]
+    for i in range(len(splits)-1):
+        intervals.append(( indices[splits[i]+1], indices[ splits[i+1]]))
+    return intervals
+
+def EstimateTandemBoundaries(seq, rpt_len, threshold):
+
+    identity_signal=ShiftedIdentity(seq, rpt_len)
+
+    high_identity_intervals=IdentifyHighIdentityRegions(identity_signal,threshold)
+    boundaries=[]
+    repeats=[]
+
+    for interval in high_identity_intervals:
+        print interval
+        l,r=interval
+        if r-l<1: continue
+        mean_PI=numpy.mean(identity_signal[l:r])
+        std_PI=numpy.std(identity_signal[l:r])
+        local_cutoff=mean_PI-2*std_PI
+        begin=l+ numpy.where(identity_signal[l:r]>=local_cutoff)[0][0]
+        end=l+ numpy.where(identity_signal[l:r]>=local_cutoff)[0][-1]
+        boundaries.append((begin, end))
+        num_rpts=int( (end-begin)/rpt_len)
+        expected_array_size=rpt_len*num_rpts
+        uncertainty=int(((end-begin)-expected_array_size)/2)
+        repeat_begin= begin+ uncertainty
+        repeats.append( seq[repeat_begin:repeat_begin+rpt_len])
+
+
+    return repeats
+
+
+
+def LaggedUngappedAlignment(query, target):
+
+    """"Computes the percent identity for every possible ungapped alignment
+    between the query and target. It does this by encoding each nucleotide with
+    a sequence of four numbers:
+
+        A: 1000
+        T: 0100
+        G: 0010
+        C: 0001
+
+    And then computing the cross-correlation function of the two signals.
+    Every fourth position in the CCF indicates the number of matching nucleotides
+    in a window equal to the length of the query, because the cross-correlation
+    of F and G is:
+
+        Conv( F, G_) (t)=sum{for all T} F(T)*G_(T-t)
+        where G_ is the time-reversed version of G.
+
+    The product F(T)*G_(T-t) will only equal one if the nucleotides match.
+
+    To get percent identity, the number of matches is divided by query length.
+        """
+
+    query_length=len(query)
+    sig_1=SeqToExanded(query)
+    sig_2=SeqToExanded(target)
+    matches=scipy.signal.fftconvolve(sig_1, sig_2[::-1])[3::4]
+    perc_id=matches/query_length
+    return perc_id[query_length:-query_length]
+
+
 
 def Autocorrel(seq, max_size, complex_num=True, p=False):
 ##    seq_array=numpy.fromstring(seq.upper(), '|S1')
