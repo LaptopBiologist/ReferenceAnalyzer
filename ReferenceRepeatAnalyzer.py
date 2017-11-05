@@ -682,6 +682,8 @@ def EstimateTandemBoundaries(seq, rpt_len, threshold):
         print interval
         l,r=interval
         if r-l<1: continue
+        #The boundaries of the array are challenging to define, because
+        #We're going to define a cutoff that
         mean_PI=numpy.mean(identity_signal[l:r])
         std_PI=numpy.std(identity_signal[l:r])
         local_cutoff=mean_PI-2*std_PI
@@ -732,7 +734,7 @@ def LaggedUngappedAlignment(query, target):
 
 
 
-def Autocorrel(seq, max_size, complex_num=True, p=False):
+def Autocorrel(seq, max_size, complex_num=True,unbiased=False,  p=False):
 ##    seq_array=numpy.fromstring(seq.upper(), '|S1')
     if complex_num==True:
         char_array=numpy.fromstring(seq.upper(), '|S1')
@@ -762,7 +764,7 @@ def Autocorrel(seq, max_size, complex_num=True, p=False):
 ##    pyplot.show()
 ##    autocorr=numpy.sign(acf_AT* acf_GC)* ( acf_AT* acf_GC)**.5
 ##    autocorr=(acf_AT+acf_GC)/2.
-    autocorr=stattools.acf(seq_array,unbiased=False,nlags=max_size, fft=True) #demean=False, fft=True)# nlags=max_size, fft=True)
+    autocorr=stattools.acf(seq_array,unbiased=unbiased,nlags=max_size, fft=True) #demean=False, fft=True)# nlags=max_size, fft=True)
 ##    avf = stattools.acovf(seq_array, unbiased=False, demean=True, fft=True)
 ##    if complex_num==True:
 ##        autocorr = avf[:max_size + 1] / avf[0]
