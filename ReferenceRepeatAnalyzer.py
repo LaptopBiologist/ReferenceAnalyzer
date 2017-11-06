@@ -224,81 +224,134 @@ def FindBestPhase(seq, repeat_size, identity_threshold):
 
 
 def FindPeriodicity(seq,outfile,seq_key='', window_size=50000, step_size=50000):
-    print len(seq)
 
+    print len(seq)
     period_list=[]
     window_list=[]
     corr_list=[]
     mode_list={}
     len_dict={}
+    windows_containing_period={}
     #Test over range of window sizes: 1000, 10000, 100000, 1000000
-    for window_size in [10000,100000,500000]:
-##        null_dist=Autocorr_Nulldist(window_size)
+    for window_size in [10000,50000,100000,500000]:
+        windows_containing_period[window_size]={}
         step_size=window_size/2
         max_repeat=window_size/2
-
         window_edges=numpy.arange(0,len(seq)-window_size+step_size, step_size)
+
         for i in range(len(window_edges)-1) :
-    ##        print i, window_edges[i],window_edges[i+1]
             seq_slice=seq[window_edges[i]:window_edges[i]+window_size]
+
             for j in range(5):
                 if len(seq_slice)<100: break
                 try:
                     autocorr=Autocorrel(seq_slice,max_repeat)
+
                 except:
                     break
-        ##        print len(autocorr)
 
                 true_period=numpy.argmax(autocorr[1:])+1
 
                 #Only interested in base periodicities>3
-                if true_period>3:
+                if true_period>10:
                     #Only going to look for periodicities>20
                     period=numpy.argmax(autocorr[20:])+20
+                    #Note that this periodicity was identified
 
-    ##                corr_list.append(autocorr[period-1])
-                    modes, seq_slice,len_list= FindBestPhase(seq_slice, period, .85)
 
-                    if len(modes)>0:
-##                        print 'Minlen={0}'.format( min(len_list))
-                        window_list.append(window_edges[i])
-                        period_list.append(period)
 
-                        mode_candidates=[]
-                        for k in range(len(modes)):
-                            m=BoothsAlgorithm( modes[k])
-                            mode_candidates.append(m)
-                            if len_dict.has_key(m)==False:
-                                len_dict[m]={}
-                            if len_dict[m].has_key(window_size)==False:
-                                len_dict[m][window_size]=0.
-                            len_dict[m][window_size]+=len_list[k]
-                        for k in range(len(mode_candidates)):
-                            m=mode_candidates[k]
-                            if mode_list.has_key(true_period)==False:
-                                mode_list[true_period]={}
-                            if mode_list[true_period].has_key(len(m))==False:
-                                mode_list[true_period][len(m)]= set()
 
-                            mode_list[true_period][len(m)].add(m )
+                    #Remove repeats of this length from the sequence
+                    len_seq=len(seq_slice)
+                    seq_slice=RemoveRepeatsOfSize(seq_slice, period, .8)
+                    if len_seq==len(seq_slice): break
+                    if windows_containing_period[window_size].has_key(period)==False:
+                        windows_containing_period[window_size] [period]=[]
+                    windows_containing_period[window_size] [period].append(i)
+                    period_list.append(period)
 
                             #Remember how many of instances of this repeat were identified
-
-
                 else: break
+        #Consolidate intervals within window length
+##
+        for period in windows_containing_period[window_size]:
+            windows_containing_period[window_size] [period]=[(window_edges[l],window_edges[r]+window_size) \
+            for l,r in  LookForSplits(sorted( list( set( windows_containing_period[window_size] [period]))))]
 
-    #Cluster modes
-##    for length in mode_list.keys():
-##        modes=list(mode_list[length])
-##        jac_array=numpy.ndarray((len(modes), len(modes)))
-##        jac_array.fill(0.)
-##        for i in range(len(modes)):
-##            for j in range(i):
-##                kmer_i=set(GetKMERS(modes[i]))
-##                kmer_j=set(GetKMERS(modes[j]))
-##                jac_array[i,j]=float(len(kmer_i&kmer_j))/len(kmer_i|kmer_j)
-##        seaborn.heatmap(jac_array)
-##        pyplot.show()
+    #Group intervals across windows by period:
+    period_dict={}
+    for window_size in windows_containing_period.keys():
+        for period in windows_containing_period[window_size].keys():
+            if period_dict.has_key(period)==False:
+                period_dict[period]=[]
+            for interval in windows_containing_period[window_size][period]:
+                period_dict[period].append(interval)
+##    return period_dict
+    #Group overlapping windows:
+    for period in period_dict.keys():
+        period_dict[period]=GroupOverlappingIntervals(period_dict[period])
+
+    return period_dict
+
+
+def GroupOverlappingIntervals(intervals):
+    sorted_intervals=sorted(intervals, key=lambda x:x[1])
+    left_list, right_list=zip(* sorted_intervals)
+
+    left_list=numpy.array(left_list)
+    right_list=numpy.array(right_list)
+
+    cluster_list=[]
+    count=0
+    while len(left_list)>1:
+        count+=1
+        ind=( left_list<=right_list[0])
+
+        if sum(ind)>1:
+            new_interval=(min(left_list[ind]), max(right_list[ind]))
+            left_list=numpy.hstack((new_interval[0],  left_list[~ind]))
+            right_list=numpy.hstack((new_interval[1], right_list[~ind]))
+            sort_ind=numpy.argsort(right_list)
+            left_list=left_list[sort_ind]
+            right_list=right_list[sort_ind]
+##            print new_interval
+
+        else:
+            cluster_list.append((left_list[0], right_list[0]))
+            left_list=left_list[1:]
+            right_list= right_list[1:]
+
+
+    cluster_list.append((left_list[0], right_list[0]))
+    return cluster_list
+
+
+def PlotTandems(per_dict):
+##    for scale in per_dict.keys():
+    for rpt_len in per_dict.keys():
+        for l,r in per_dict[rpt_len]:
+            pyplot.plot((l,r), (rpt_len, rpt_len), c='red', alpha=.8)
+    pyplot.show()
+##def PlotTandems(per_dict):
+##    for scale in per_dict.keys():
+##        for rpt_len in per_dict[scale].keys():
+##            for l in per_dict[scale][rpt_len]:
+##                pyplot.scatter(l, rpt_len, c='red', alpha=.8)
+##    pyplot.show()
+def RemoveRepeatsOfSize(seq, rpt_len, threshold):
+    seq_array=numpy.fromstring(seq, '|S1')
+    identity_signal=ShiftedIdentity(seq, rpt_len)
+
+    high_identity_intervals=IdentifyHighIdentityRegions(identity_signal,threshold)
+
+    for interval in high_identity_intervals:
+        l,r=interval
+        r+=rpt_len
+        seq_array[l:r]='N'
+    unmasked_ind=seq_array!='N'
+
+    return ''.join(seq_array[unmasked_ind])
+
 
     consensus_seq=[]
     info_list=[]
@@ -652,12 +705,30 @@ def ShiftedIdentity(target, repeat_len):
     """Compares a sequence with a shifted version of itself. Good for visualizing"""
 
     seq_array=numpy.fromstring(target, '|S1')
+
     matches=(seq_array[:-repeat_len] == seq_array[repeat_len:])
+    #Ensure Ns are always treated as mismatches
+    N_pos=( (seq_array[:-repeat_len]=='N')+ (seq_array[repeat_len:]=='N') )>0
+    matches[N_pos]=0
+
     smoothing_kernel=[1./repeat_len]*repeat_len
     perc_id=scipy.signal.fftconvolve(smoothing_kernel, matches)
     return perc_id
 
+def LookForSplits(indices):
+    indices=numpy.array(list(indices))
 
+    diff_ind=numpy.diff(indices)
+
+    splits=[0]+ list(numpy.where(diff_ind>1)[0])+[len(indices)-1]
+    intervals=[(indices[splits[0]], indices[splits[1]]) ]
+    print indices
+
+
+    for i in range(1,len(splits)-1):
+        intervals.append((indices[splits[i]+1], indices[splits[i+1]]))
+
+    return intervals
 def IdentifyHighIdentityRegions(identity, threshold):
     indices=numpy.where(identity>=threshold)[0]
     indices=numpy.array([0]+list(indices)+[len(identity)-1])
@@ -701,6 +772,7 @@ def EstimateTandemBoundaries(seq, rpt_len, threshold):
 
 
 
+
 def LaggedUngappedAlignment(query, target):
 
     """"Computes the percent identity for every possible ungapped alignment
@@ -725,12 +797,30 @@ def LaggedUngappedAlignment(query, target):
     To get percent identity, the number of matches is divided by query length.
         """
 
-    query_length=len(query)
-    sig_1=SeqToExanded(query)
-    sig_2=SeqToExanded(target)
-    matches=scipy.signal.fftconvolve(sig_1, sig_2[::-1])[3::4]
-    perc_id=matches/query_length
-    return perc_id[query_length:-query_length]
+    #To avoid memory errors if the target is longer than 100000, we split it and
+    #stitch the results together
+    if len(target)>200000:
+        split_indices=numpy.arange(0, len(target), 100000)
+        if max(split_indices)!=len(target):
+            split_indices=numpy.hstack((split_indices, len(target) ))
+        print split_indices
+        for i,v in enumerate(split_indices[:-1]):
+            print i, v
+            if i==0:
+                sliced_seq=target[0:split_indices[i+1]]
+                percent_id=LaggedUngappedAlignment(query, sliced_seq)
+            else:
+                print v-len(query),split_indices[i+1]
+                sliced_seq=target[v-len(query):split_indices[i+1]]
+                percent_id=numpy.hstack((percent_id,LaggedUngappedAlignment(query, sliced_seq)[1:] ))
+        return percent_id
+    else:
+        query_length=len(query)
+        sig_1=SeqToExanded(query)
+        sig_2=SeqToExanded(target)
+        matches=scipy.signal.fftconvolve(sig_1, sig_2[::-1])[3::4]
+        perc_id=matches/query_length
+        return perc_id[query_length-1:-query_length+1][::-1]
 
 
 
