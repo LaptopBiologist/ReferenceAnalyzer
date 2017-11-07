@@ -28,12 +28,18 @@ from Bio import Seq
 from matplotlib import pyplot
 import seaborn
 import itertools
+import subprocess
+
 
 import gzip
 
 import sys
 
 import copy
+
+
+#Global
+MUSCLE_PATH=None
 
 class RollingKernelAverage(BaseEstimator):
     def __init__(self,bandwidth=.5, weights=[]):
@@ -67,6 +73,8 @@ class RollingKernelAverage(BaseEstimator):
     def score(self, X, Y):
         mean=self.predict(X)
         return -1*((mean-Y)**2).sum()
+
+
 
 
 def CountSequences(k=6, alphabet='ATGC'):
@@ -741,34 +749,107 @@ def IdentifyHighIdentityRegions(identity, threshold):
         intervals.append(( indices[splits[i]+1], indices[ splits[i+1]]))
     return intervals
 
-def EstimateTandemBoundaries(seq, rpt_len, threshold):
+def ExtractRepeatsOfSize(seq, rpt_len, threshold=.8):
 
     identity_signal=ShiftedIdentity(seq, rpt_len)
-
+##    return identity_signal
     high_identity_intervals=IdentifyHighIdentityRegions(identity_signal,threshold)
+    #The intervals identified go from the end of the first repeat in the array
+    #to the beginning of the second repeat.
+##    return high_identity_intervals
     boundaries=[]
     repeats=[]
 
     for interval in high_identity_intervals:
-        print interval
+
         l,r=interval
         if r-l<1: continue
-        #The boundaries of the array are challenging to define, because
-        #We're going to define a cutoff that
+        #The boundaries of the array need to be inferred, because regions matching
+        #the repeat will be surrounded by slopes of decaying identity:
+        #    _______
+        #   /       \
+        #  /         \
+        #
+        #The intervals identified contain some of the sloping regions. To remove
+        #at least some of these regions, we first summarize the distribution
+        #of percent identity within the interval.
         mean_PI=numpy.mean(identity_signal[l:r])
         std_PI=numpy.std(identity_signal[l:r])
+
+        #We define a cutoff as identity more than two standards below the mean
         local_cutoff=mean_PI-2*std_PI
+
+        #We refine the interval to the first and last positions where identity
+        #is below the cutoff
         begin=l+ numpy.where(identity_signal[l:r]>=local_cutoff)[0][0]
         end=l+ numpy.where(identity_signal[l:r]>=local_cutoff)[0][-1]
         boundaries.append((begin, end))
         num_rpts=int( (end-begin)/rpt_len)
+        #The we determine the largest tandem of complete repeat units that could
+        #fit in this interval
         expected_array_size=rpt_len*num_rpts
+
+        #The set of positions within this array could start is:
+        #(begin, end - expected_array_size)
+        #We assume each is equally likely and take the expected value as
+        #the array's start.
         uncertainty=int(((end-begin)-expected_array_size)/2)
         repeat_begin= begin+ uncertainty
+
+        #We extract the second repeat in the array. The above determination of
+        #the starting point is likely to make some error, but we expect the true
+        #juncion to be near the edge of the repeat.
         repeats.append( seq[repeat_begin:repeat_begin+rpt_len])
 
-
     return repeats
+
+def GetRepeatsInInterval(seq, period, threshold):
+    candidate_rpts=ExtractRepeatsOfSize(seq, period, threshold)
+    repeat_list=[]
+    masked_seq=seq
+    for rpt in candidate_rpts:
+        identified_rpts, masked_seq=ExtractRepeatFromArray(masked_seq, rpt)
+        repeat_list+=identified_rpts
+        if len(identified_rpts)==0: break
+    return repeat_list
+
+
+def ExtractRepeatFromArray(sequence, repeat, threshold=.8):
+
+    #Note to self: Want to retain information about their locations
+
+    #
+    identity_signal=LaggedUngappedAlignment(repeat, sequence)
+    seq_array=numpy.fromstring(sequence, '|S1')
+
+    #It obvious from examination of identity_signals that heuristics could be
+    #devised to identify indels. Such a heuristic should be incorporated here.
+    hits=numpy.where(identity_signal>=threshold)[0]
+
+    if len(hits)==0:
+        return [], sequence
+
+    repeat_length=len(repeat)
+    repeat_list=[]
+    distance_between_hits=numpy.hstack(( numpy.diff(hits), [repeat_length]))
+    #This counts the number of consecutive repeats
+    consecutive_repeats=0
+    for index, distance in enumerate( distance_between_hits):
+        #If the distance to the next repeat is within 105% of the expected repeat length
+        #this is part of a tandem array. Extract the repeat, mask it, and increment
+        #the consecutive repeat counter
+        if distance<=repeat_length*1.05:
+            repeat_list.append(sequence[hits[index]:hits[index]+distance])
+            seq_array[hits[index]:hits[index]+distance]='N'
+            consecutive_repeats+=1
+        elif counter>0:
+            repeat_list.append(sequence[hits[index]:hits[index]+repeat_length])
+            seq_array[hits[index]:hits[index]+repeat_length]='N'
+            counter=0
+        else:
+            seq_array[hits[index]:hits[index]+repeat_length]='N'
+    masked_sequence=''.join(seq_array)
+    return repeat_list, masked_sequence
 
 
 
@@ -799,22 +880,8 @@ def LaggedUngappedAlignment(query, target):
 
     #To avoid memory errors if the target is longer than 100000, we split it and
     #stitch the results together
-    if len(target)>200000:
-        split_indices=numpy.arange(0, len(target), 100000)
-        if max(split_indices)!=len(target):
-            split_indices=numpy.hstack((split_indices, len(target) ))
-        print split_indices
-        for i,v in enumerate(split_indices[:-1]):
-            print i, v
-            if i==0:
-                sliced_seq=target[0:split_indices[i+1]]
-                percent_id=LaggedUngappedAlignment(query, sliced_seq)
-            else:
-                print v-len(query),split_indices[i+1]
-                sliced_seq=target[v-len(query):split_indices[i+1]]
-                percent_id=numpy.hstack((percent_id,LaggedUngappedAlignment(query, sliced_seq)[1:] ))
-        return percent_id
-    else:
+    if len(target)<200000:
+
         query_length=len(query)
         sig_1=SeqToExanded(query)
         sig_2=SeqToExanded(target)
@@ -822,7 +889,68 @@ def LaggedUngappedAlignment(query, target):
         perc_id=matches/query_length
         return perc_id[query_length-1:-query_length+1][::-1]
 
+    else:
+        split_indices=numpy.arange(0, len(target), 100000)
 
+        if max(split_indices)!=len(target):
+            split_indices=numpy.hstack((split_indices, len(target) ))
+        print split_indices
+
+        for i,v in enumerate(split_indices[:-1]):
+            print i, v
+
+            if i==0:
+                sliced_seq=target[0:split_indices[i+1]]
+                percent_id=LaggedUngappedAlignment(query, sliced_seq)
+
+            else:
+                print v-len(query),split_indices[i+1]
+                sliced_seq=target[v-len(query):split_indices[i+1]]
+                percent_id=numpy.hstack((percent_id,LaggedUngappedAlignment(query, sliced_seq)[1:] ))
+        return percent_id
+
+def SetMUSCLEPath(path):
+    global MUSCLE_PATH
+    MUSCLE_PATH= path
+
+def RunMuscle(infile, outfile, maxiters, logfile):
+    command=[MUSCLE_PATH, '-in', str( infile), '-out',str( outfile), '-maxiters', str(maxiters)]
+    errhandle=open(logfile, 'a')
+    process=subprocess.Popen(command, stderr=errhandle)
+    process.communicate()
+    errhandle.close()
+
+
+def BuildConsensus(infile, outfile):
+    pass
+
+def GetConsensusFromFasta(infile):
+    seq=GetSeq(infile)
+    cons_array=numpy.ndarray((5, len(seq.values()[0])))
+    cons_array.fill(0.)
+    nt_dict={'-':0, 'A':1, 'C':2,'T':3, 'G':4}
+    NT_array=numpy.array(['-', 'A', 'C', 'T', 'G'])
+    for key in seq.keys():
+        seq_array=numpy.fromstring(seq[key], '|S1')
+        for i,v in enumerate(NT_array):
+            ind=seq_array==v
+            cons_array[i,ind]+=1.
+    cons_seq=NT_array[numpy.argmax(cons_array,0)]
+    return ''.join(cons_seq[cons_seq!='-'])
+
+def ConsensusFromClustal(alignment):
+    nt_list=[]
+    for col in range( alignment.get_alignment_length()):
+        column=alignment[:,col]
+
+        nt_array=numpy.fromstring(column, '|S1')
+
+
+        mode=scipy.stats.mode(nt_array)[0][0]
+
+        nt_list.append(mode)
+    nt_list= numpy.array(nt_list)
+    return ''.join(nt_list[nt_list!='-'])
 
 def Autocorrel(seq, max_size, complex_num=True,unbiased=False,  p=False):
 ##    seq_array=numpy.fromstring(seq.upper(), '|S1')
