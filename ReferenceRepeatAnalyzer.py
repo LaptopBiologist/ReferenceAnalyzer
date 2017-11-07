@@ -29,6 +29,7 @@ from matplotlib import pyplot
 import seaborn
 import itertools
 import subprocess
+import csv
 
 
 import gzip
@@ -40,6 +41,20 @@ import copy
 
 #Global
 MUSCLE_PATH=None
+
+class ReferenceRepeat():
+    def __init__(self, sequence, left, right, tandem_flag):
+        #The repeat's sequence as a string
+        self.sequence=sequence
+
+        #The repeat's left and right edges
+        self.left=left
+        self.right=right
+        self.chrom=''
+        self.length=right-left
+
+        #Whether the repeat was found adjacent to another copy
+        self.tandem_flag=tandem_flag
 
 class RollingKernelAverage(BaseEstimator):
     def __init__(self,bandwidth=.5, weights=[]):
@@ -76,6 +91,10 @@ class RollingKernelAverage(BaseEstimator):
 
 
 
+
+def MakeDir(newdir):
+    if os.path.exists(newdir)==False:
+        os.mkdir(newdir)
 
 def CountSequences(k=6, alphabet='ATGC'):
     """Enumerate all possible k-length products of the alphabet and then
@@ -141,6 +160,57 @@ def CleanName(name):
         name='_'.join(name.split(i))
     return(name)
 
+def TandemFinder(infile, outdir, threshold):
+    MakeDir(outdir)
+    out_fasta='{0}/consensus_repeats.fa'.format(outdir)
+    fasta_handle=open(out_fasta, 'w')
+    out_annotation='{0}/genome_annotation.tsv'.format(outdir)
+    annotation_handle=open(out_annotation, 'w')
+    annotation_table=csv.writer(annotation_handle, delimiter='\t')
+    log_file='{0}/errlog.txt'.format(outdir)
+
+    repeat_dir='{0}/repeats'.format(outdir)
+    MakeDir(repeat_dir)
+    sequences=GetSeq(infile, upper=True)#, rename=True)
+    for key in sorted( sequences.keys()):
+        out_dir='/'.join(outfile.split('/')[:-1])
+        out_root='.'.join( outfile.split('/')[-1].split('.')[:-1])
+        outimage='{0}/{1}_{2}.png'.format(out_dir, out_root, CleanName( key))
+
+        interval_dictionary= FindPeriodicity(sequences[key], outfile, key)
+        true_intervals={}
+        for period in interval_dictionary.keys():
+            true_intervals[period]=[]
+            for interval in interval_dictionary[period]:
+                left, right=interval
+                repeat_list=GetRepeatsInInterval(sequences[key][left:right], period, threshold)
+                #Update repeat positions:
+                repeat_count=0
+                left_boundary, right_boundary=numpy.inf, 0
+                for i in range(len(repeat_list)):
+                    repeat_list[i].left+=left
+                    repeat_list[i].right+=left
+                    repeat_list[i].chrom=key
+                    #Determine the correct boundaries of the array
+                    if repeat_list[i].tandem_flag==True:
+                        repeat_count+=1
+                        left_boundary=max((left_boundary, repeat_list[i].left))
+                        right_boundary=max((left_boundary, repeat_list[i].left))
+##                name_root="Chr={0}_period={1}".format(key, period)
+                true_intervals[period].append((left_boundary, right_boundary))
+                #Build consensus
+                fasta_name='{0}/{1}_{2}_{3}-{4}'.format(repeat_dir, key, period, left_boundary, right_boundary)
+                cons=BuildConsensus(repeat_list, fasta_name, log_file)
+
+                #Write consensus
+                fasta_handle.write('>{0}\n'.format(fasta_name.split('/')[-1]))
+                fasta_handle.write('{0}\n'.format( cons))
+
+                row=[key, len(cons), repeat_count,  left_boundary, right_boundary, cons]
+                annotation_table.writerow(row)
+    annotation_handle.close()
+    fasta_handle.close()
+##        print key
 def ExtractTandems(infile, outfile):
     sequences=GetSeq(infile, upper=True)#, rename=True)
     for key in sorted( sequences.keys()):
@@ -233,7 +303,7 @@ def FindBestPhase(seq, repeat_size, identity_threshold):
 
 def FindPeriodicity(seq,outfile,seq_key='', window_size=50000, step_size=50000):
 
-    print len(seq)
+##    print len(seq)
     period_list=[]
     window_list=[]
     corr_list=[]
@@ -338,7 +408,9 @@ def PlotTandems(per_dict):
 ##    for scale in per_dict.keys():
     for rpt_len in per_dict.keys():
         for l,r in per_dict[rpt_len]:
-            pyplot.plot((l,r), (rpt_len, rpt_len), c='red', alpha=.8)
+            pyplot.plot((l,r), (rpt_len, rpt_len), c='black', alpha=1)
+    pyplot.ylabel('Repeat Unit Length')
+    pyplot.xlabel('Position')
     pyplot.show()
 ##def PlotTandems(per_dict):
 ##    for scale in per_dict.keys():
@@ -720,7 +792,7 @@ def ShiftedIdentity(target, repeat_len):
     matches[N_pos]=0
 
     smoothing_kernel=[1./repeat_len]*repeat_len
-    perc_id=scipy.signal.fftconvolve(smoothing_kernel, matches)
+    perc_id=scipy.signal.fftconvolve(smoothing_kernel, matches)[::-1]
     return perc_id
 
 def LookForSplits(indices):
@@ -730,7 +802,7 @@ def LookForSplits(indices):
 
     splits=[0]+ list(numpy.where(diff_ind>1)[0])+[len(indices)-1]
     intervals=[(indices[splits[0]], indices[splits[1]]) ]
-    print indices
+##    print indices
 
 
     for i in range(1,len(splits)-1):
@@ -839,20 +911,23 @@ def ExtractRepeatFromArray(sequence, repeat, threshold=.8):
         #this is part of a tandem array. Extract the repeat, mask it, and increment
         #the consecutive repeat counter
         if distance<=repeat_length*1.05:
-            repeat_list.append(sequence[hits[index]:hits[index]+distance])
-            seq_array[hits[index]:hits[index]+distance]='N'
+            left, right=hits[index],hits[index]+distance
+
+            seq_array[left:right]='N'
             consecutive_repeats+=1
         elif counter>0:
-            repeat_list.append(sequence[hits[index]:hits[index]+repeat_length])
-            seq_array[hits[index]:hits[index]+repeat_length]='N'
+            left, right= hits[index],hits[index]+repeat_length
+            repeat_seq=sequence[left, right]
+            repeat_list.append(ReferenceRepeat(sequence, left, right,True))
+            seq_array[left,right]='N'
             counter=0
         else:
+            left, right= hits[index],hits[index]+repeat_length
+            repeat_seq=sequence[left, right]
+            repeat_list.append(ReferenceRepeat(sequence, left, right,False))
             seq_array[hits[index]:hits[index]+repeat_length]='N'
     masked_sequence=''.join(seq_array)
     return repeat_list, masked_sequence
-
-
-
 
 def LaggedUngappedAlignment(query, target):
 
@@ -920,8 +995,41 @@ def RunMuscle(infile, outfile, maxiters, logfile):
     process.communicate()
     errhandle.close()
 
+def WriteFasta(sequences, outfile):
+    outhandle=open(outfile, 'w')
+    for i,s in  enumerate( sequences ):
+        outhandle.write('>{0}_{1}_{2}\n'.format(s.chrom, s.left, s.right))
+        outhandle.write('{0}\n'.format(s.sequence))
+    outhandle.close()
 
-def BuildConsensus(infile, outfile):
+
+def BuildConsensus(sequences, outfile, log_handle):
+    """Takes a list of sequences and generates a consensus
+    """
+
+    fasta_output='{0}_repeats.fa'.format(outfile)
+
+    #Limit this to tandem repeats
+    tandem_repeats=[s  for s in sequences if s.tandem_flag]
+    #Output sequences to *fasta
+    WriteFasta(sequences, fasta_output)
+    #Run the multiple alignment
+    msa_output=fasta_output='{0}_msa.fa'.format(outfile)
+    RunMuscle(fasta_output, msa_output, 2, log_handle)
+
+    #To do: Account for the possibility that not all repeats are well described
+    #by one consensus
+    #   Use the multiple to cluster sequences
+    #       Not implemented
+    #   Run multiple alignments on each cluster
+    #       Not implemented
+
+    #Build consensus
+    consensus_sequence=GetConsensusFromFasta(msa_output)
+
+    return consensus_sequence
+
+def ClusterMSA(sequences):
     pass
 
 def GetConsensusFromFasta(infile):
