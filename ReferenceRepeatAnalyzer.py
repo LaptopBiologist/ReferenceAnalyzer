@@ -30,6 +30,7 @@ import seaborn
 import itertools
 import subprocess
 import csv
+import os
 
 
 import gzip
@@ -160,7 +161,8 @@ def CleanName(name):
         name='_'.join(name.split(i))
     return(name)
 
-def TandemFinder(infile, outdir, threshold):
+def TandemFinder(infile, outdir,muscle_path, threshold):
+    SetMUSCLEPath(muscle_path)
     MakeDir(outdir)
     out_fasta='{0}/consensus_repeats.fa'.format(outdir)
     fasta_handle=open(out_fasta, 'w')
@@ -171,22 +173,38 @@ def TandemFinder(infile, outdir, threshold):
 
     repeat_dir='{0}/repeats'.format(outdir)
     MakeDir(repeat_dir)
-    sequences=GetSeq(infile, upper=True)#, rename=True)
+    sequences=GetSeq(infile, rename=True)
     for key in sorted( sequences.keys()):
-        out_dir='/'.join(outfile.split('/')[:-1])
-        out_root='.'.join( outfile.split('/')[-1].split('.')[:-1])
-        outimage='{0}/{1}_{2}.png'.format(out_dir, out_root, CleanName( key))
-
-        interval_dictionary= FindPeriodicity(sequences[key], outfile, key)
+##        if key!='3R': continue
+##        out_dir='/'.join(outfile.split('/')[:-1])
+##        out_root='.'.join( outfile.split('/')[-1].split('.')[:-1])
+##        outimage='{0}/{1}_{2}.png'.format(out_dir, out_root, CleanName( key))
+        masked_seq=sequences[key]
+        interval_dictionary= FindPeriodicity(sequences[key], '', key)
+        #Sort intervals by length:
+        interval_list=[]
         true_intervals={}
         for period in interval_dictionary.keys():
             true_intervals[period]=[]
             for interval in interval_dictionary[period]:
-                left, right=interval
-                repeat_list=GetRepeatsInInterval(sequences[key][left:right], period, threshold)
-                #Update repeat positions:
-                repeat_count=0
-                left_boundary, right_boundary=numpy.inf, 0
+                l,r=interval
+                interval_list.append([period, interval,abs( r-l)])
+        sorted_intervals=sorted(interval_list, key=lambda x:x[2], reverse=True)
+
+        for period, interval, interval_length in sorted_intervals:
+            left, right=interval
+            #Modified to return a dictionary
+            if period<20:
+                masked=MaskRepeatsOfSize(masked_seq[left:right], period, threshold)
+                masked_seq=masked_seq[:left]+masked+masked_seq[right:]
+                continue
+            repeat_dict, masked=GetRepeatsInInterval(sequences[key][left:right], period, threshold, masked_seq[left:right])
+            masked_seq=masked_seq[:left]+masked+masked_seq[right:]
+            #Update repeat positions:
+            repeat_count=0
+            left_boundary, right_boundary=numpy.inf, 0
+            for major_period in repeat_dict.keys():
+                repeat_list=repeat_dict[major_period]
                 for i in range(len(repeat_list)):
                     repeat_list[i].left+=left
                     repeat_list[i].right+=left
@@ -194,20 +212,21 @@ def TandemFinder(infile, outdir, threshold):
                     #Determine the correct boundaries of the array
                     if repeat_list[i].tandem_flag==True:
                         repeat_count+=1
-                        left_boundary=max((left_boundary, repeat_list[i].left))
-                        right_boundary=max((left_boundary, repeat_list[i].left))
+                        left_boundary=min((left_boundary, repeat_list[i].left))
+                        right_boundary=max((right_boundary, repeat_list[i].right))
 ##                name_root="Chr={0}_period={1}".format(key, period)
+                if repeat_count==0: continue
                 true_intervals[period].append((left_boundary, right_boundary))
                 #Build consensus
-                fasta_name='{0}/{1}_{2}_{3}-{4}'.format(repeat_dir, key, period, left_boundary, right_boundary)
+                fasta_name='{0}/{1}_{2}_{3}_{4}'.format(repeat_dir, key, major_period, left_boundary, right_boundary)
                 cons=BuildConsensus(repeat_list, fasta_name, log_file)
 
-                #Write consensus
-                fasta_handle.write('>{0}\n'.format(fasta_name.split('/')[-1]))
-                fasta_handle.write('{0}\n'.format( cons))
+            #Write consensus
+##                fasta_handle.write('>{0}\n'.format(fasta_name.split('/')[-1]))
+##                fasta_handle.write('{0}\n'.format( cons))
 
-                row=[key, len(cons), repeat_count,  left_boundary, right_boundary, cons]
-                annotation_table.writerow(row)
+##                row=[key, len(cons), repeat_count,  left_boundary, right_boundary, cons]
+##                annotation_table.writerow(row)
     annotation_handle.close()
     fasta_handle.close()
 ##        print key
@@ -331,9 +350,9 @@ def FindPeriodicity(seq,outfile,seq_key='', window_size=50000, step_size=50000):
                 true_period=numpy.argmax(autocorr[1:])+1
 
                 #Only interested in base periodicities>3
-                if true_period>10:
+                if true_period>=3:
                     #Only going to look for periodicities>20
-                    period=numpy.argmax(autocorr[20:])+20
+                    period=numpy.argmax(autocorr[3:])+3
                     #Note that this periodicity was identified
 
 
@@ -432,6 +451,20 @@ def RemoveRepeatsOfSize(seq, rpt_len, threshold):
 
     return ''.join(seq_array[unmasked_ind])
 
+
+def MaskRepeatsOfSize(seq, rpt_len, threshold):
+    seq_array=numpy.fromstring(seq, '|S1')
+    identity_signal=ShiftedIdentity(seq, rpt_len)
+
+    high_identity_intervals=IdentifyHighIdentityRegions(identity_signal,threshold)
+
+    for interval in high_identity_intervals:
+        l,r=interval
+        r+=rpt_len
+        seq_array[l:r]='N'
+
+
+    return ''.join(seq_array)
 
     consensus_seq=[]
     info_list=[]
@@ -792,7 +825,7 @@ def ShiftedIdentity(target, repeat_len):
     matches[N_pos]=0
 
     smoothing_kernel=[1./repeat_len]*repeat_len
-    perc_id=scipy.signal.fftconvolve(smoothing_kernel, matches)[::-1]
+    perc_id=scipy.signal.fftconvolve(smoothing_kernel, matches)
     return perc_id
 
 def LookForSplits(indices):
@@ -871,63 +904,125 @@ def ExtractRepeatsOfSize(seq, rpt_len, threshold=.8):
         #We extract the second repeat in the array. The above determination of
         #the starting point is likely to make some error, but we expect the true
         #juncion to be near the edge of the repeat.
-        repeats.append( seq[repeat_begin:repeat_begin+rpt_len])
+        repeats.append(( seq[repeat_begin:repeat_begin+rpt_len],(repeat_begin,repeat_begin+rpt_len)  ))
 
     return repeats
 
-def GetRepeatsInInterval(seq, period, threshold):
-    candidate_rpts=ExtractRepeatsOfSize(seq, period, threshold)
-    repeat_list=[]
-    masked_seq=seq
-    for rpt in candidate_rpts:
-        identified_rpts, masked_seq=ExtractRepeatFromArray(masked_seq, rpt)
-        repeat_list+=identified_rpts
-        if len(identified_rpts)==0: break
-    return repeat_list
+def GetRepeatsInInterval(seq, period, threshold, masked=None):
+    if masked!=None:
+        candidate_rpts=ExtractRepeatsOfSize(masked, period, threshold)
+    else:
+        candidate_rpts=ExtractRepeatsOfSize(seq, period, threshold)
+    candidate_rpts=list(set(candidate_rpts))
+    rpt_dict={}
+    masked_seq=copy.copy( seq)
+    checked_rpts=set()
+##    while len( candidate_rpts)>0:
+    for rpt_info in candidate_rpts:
+        rpt,interval=rpt_info
+        l,r=interval
+        print "N prop=", float( masked_seq[l:r].count('N'))/(r-l)
+##        if float( masked_seq[l:r].count('N'))/(r-l)>.1: continue
+
+        checked_rpts.add(rpt)
+        identified_rpts, masked, rpt_len=ExtractRepeatFromArray(seq, masked_seq, rpt)
+        del masked_seq
+        masked_seq=''.join( masked)
+
+        print len(rpt), "Masked sequence:", (numpy.fromstring(masked_seq, '|S1')=='N').sum()
+        if rpt_dict.has_key(rpt_len)==False:
+            rpt_dict[rpt_len]=[]
+
+        rpt_dict[rpt_len]+=identified_rpts
+##        candidate_rpts=ExtractRepeatsOfSize(seq, period, threshold)
+##        candidate_rpts=list(set(candidate_rpts)-checked_rpts)
+##        repeat_list+=identified_rpts
+##        if len(identified_rpts)==0: break
+    return rpt_dict, masked_seq
 
 
-def ExtractRepeatFromArray(sequence, repeat, threshold=.8):
+#m=(y'-y)/(x'-x)
+
+def PickPeriods(autocorr):
+    best_period=numpy.argmax(autocorr[1:])+1
+    length_auto=len(autocorr)
+    slope=(1*autocorr[ best_period])/(length_auto-best_period)
+    print slope
+    beta=slope*length_auto
+    return test-( numpy.arange(length_auto)*slope+beta)
+
+def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_length=30):
 
     #Note to self: Want to retain information about their locations
 
-    #
-    identity_signal=LaggedUngappedAlignment(repeat, sequence)
-    seq_array=numpy.fromstring(sequence, '|S1')
+    #Only search for the query repeat
+    identity_signal=LaggedUngappedAlignment(query, masked_sequence)
+    seq_array=numpy.fromstring(masked_sequence, '|S1')
 
     #It obvious from examination of identity_signals that heuristics could be
     #devised to identify indels. Such a heuristic should be incorporated here.
+
+##    repeat_length=len(repeat)
+
     hits=numpy.where(identity_signal>=threshold)[0]
 
+    #If no hits, terminate
     if len(hits)==0:
-        return [], sequence
+        return [], masked_sequence,0
 
-    repeat_length=len(repeat)
+    #Compute the distance between adjacent hits--the actual periodicity of the repeat
+    distance_between_hits=numpy.diff(hits)
+    #Determine the most frequent periodicity
+    mode_distance,repeat_count=scipy.stats.mode(distance_between_hits)
+    #If the most frequent periodicity is larger than the length of the query repeat
+    #the query might be part of a higher-order repeat. However, if there aren't a lot
+    #of hits, this might just reflect dispersed repeats or large insertions, and
+    #we don't want to pick those up. So, impose a count threshold.
+    #So, if the most frequent periodicity is longer than expected and occurs at least
+    #3 times, update the expected periodicty to reflect that, otherwise determine
+    #expected periodicity from the query repeat
+    if repeat_count>=3 and mode_distance>len(query):
+        expected_periodicity=mode_distance[0]
+    else:
+        expected_periodicity=len(query)
+
+##    print expected_periodicity
+    distance_between_hits=numpy.hstack((distance_between_hits , [expected_periodicity]))
+##    if expected_periodicity<min_length:
+##        return [], masked_sequence,0
     repeat_list=[]
-    distance_between_hits=numpy.hstack(( numpy.diff(hits), [repeat_length]))
+
     #This counts the number of consecutive repeats
     consecutive_repeats=0
     for index, distance in enumerate( distance_between_hits):
         #If the distance to the next repeat is within 105% of the expected repeat length
         #this is part of a tandem array. Extract the repeat, mask it, and increment
         #the consecutive repeat counter
-        if distance<=repeat_length*1.05:
+        if distance<=min_length:
+            #Really want to ignore very simple repeats. Skip AND mask.
             left, right=hits[index],hits[index]+distance
-
             seq_array[left:right]='N'
+            continue
+        if distance<=expected_periodicity*1.05:
+            left, right=hits[index],hits[index]+distance
+            tandem=True
             consecutive_repeats+=1
-        elif counter>0:
-            left, right= hits[index],hits[index]+repeat_length
-            repeat_seq=sequence[left, right]
-            repeat_list.append(ReferenceRepeat(sequence, left, right,True))
-            seq_array[left,right]='N'
-            counter=0
+
+        elif consecutive_repeats>0:
+            left, right= hits[index],hits[index]+expected_periodicity
+            tandem=True
+            consecutive_repeats=0
+
         else:
-            left, right= hits[index],hits[index]+repeat_length
-            repeat_seq=sequence[left, right]
-            repeat_list.append(ReferenceRepeat(sequence, left, right,False))
-            seq_array[hits[index]:hits[index]+repeat_length]='N'
+            left, right= hits[index],hits[index]+expected_periodicity
+            tandem=False
+
+        repeat_seq=sequence[left: right]
+        repeat_list.append(ReferenceRepeat(repeat_seq, left, right,tandem))
+        seq_array[left:right]='N'
+
     masked_sequence=''.join(seq_array)
-    return repeat_list, masked_sequence
+    return repeat_list, seq_array, expected_periodicity
 
 def LaggedUngappedAlignment(query, target):
 
@@ -969,17 +1064,17 @@ def LaggedUngappedAlignment(query, target):
 
         if max(split_indices)!=len(target):
             split_indices=numpy.hstack((split_indices, len(target) ))
-        print split_indices
+##        print split_indices
 
         for i,v in enumerate(split_indices[:-1]):
-            print i, v
+##            print i, v
 
             if i==0:
                 sliced_seq=target[0:split_indices[i+1]]
                 percent_id=LaggedUngappedAlignment(query, sliced_seq)
 
             else:
-                print v-len(query),split_indices[i+1]
+##                print v-len(query),split_indices[i+1]
                 sliced_seq=target[v-len(query):split_indices[i+1]]
                 percent_id=numpy.hstack((percent_id,LaggedUngappedAlignment(query, sliced_seq)[1:] ))
         return percent_id
@@ -989,7 +1084,7 @@ def SetMUSCLEPath(path):
     MUSCLE_PATH= path
 
 def RunMuscle(infile, outfile, maxiters, logfile):
-    command=[MUSCLE_PATH, '-in', str( infile), '-out',str( outfile), '-maxiters', str(maxiters)]
+    command=[MUSCLE_PATH, '-in', str( infile), '-out',str( outfile), '-maxiters', str(maxiters), '-diag']
     errhandle=open(logfile, 'a')
     process=subprocess.Popen(command, stderr=errhandle)
     process.communicate()
@@ -1014,8 +1109,8 @@ def BuildConsensus(sequences, outfile, log_handle):
     #Output sequences to *fasta
     WriteFasta(sequences, fasta_output)
     #Run the multiple alignment
-    msa_output=fasta_output='{0}_msa.fa'.format(outfile)
-    RunMuscle(fasta_output, msa_output, 2, log_handle)
+    msa_output='{0}_msa.fa'.format(outfile)
+##    RunMuscle(fasta_output, msa_output, 1, log_handle)
 
     #To do: Account for the possibility that not all repeats are well described
     #by one consensus
@@ -1025,9 +1120,9 @@ def BuildConsensus(sequences, outfile, log_handle):
     #       Not implemented
 
     #Build consensus
-    consensus_sequence=GetConsensusFromFasta(msa_output)
+##    consensus_sequence=GetConsensusFromFasta(msa_output)
 
-    return consensus_sequence
+##    return consensus_sequence
 
 def ClusterMSA(sequences):
     pass
@@ -1373,7 +1468,7 @@ def main(argv):
         param[argv[i]]= argv[i+1]
     print param
     if param=={}: return
-    ExtractTandems(param['-i'], param['-o'])
+    TandemFinder(param['-i'], param['-o'], '' ,.8)
 
 if __name__ == '__main__':
     main(sys.argv)
