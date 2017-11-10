@@ -173,7 +173,7 @@ def TandemFinder(infile, outdir,muscle_path, threshold):
 
     repeat_dir='{0}/repeats'.format(outdir)
     MakeDir(repeat_dir)
-    sequences=GetSeq(infile, rename=True)
+    sequences=GetSeq(infile)#, rename=True)
     for key in sorted( sequences.keys(), reverse=True):
 ##        if key!='3R': continue
 ##        out_dir='/'.join(outfile.split('/')[:-1])
@@ -218,15 +218,16 @@ def TandemFinder(infile, outdir,muscle_path, threshold):
                 if repeat_count==0: continue
                 true_intervals[period].append((left_boundary, right_boundary))
                 #Build consensus
-                fasta_name='{0}/{1}_{2}_{3}_{4}'.format(repeat_dir, key, major_period, left_boundary, right_boundary)
-                cons=BuildConsensus(repeat_list, fasta_name, log_file)
+                fasta_name='{0}/{1}_{2}_{3}_{4}'.format(repeat_dir, key.split('_')[0], major_period, left_boundary, right_boundary)
+                cons_dict=BuildConsensus(repeat_list, fasta_name, log_file)
 
             #Write consensus
-##                fasta_handle.write('>{0}\n'.format(fasta_name.split('/')[-1]))
-##                fasta_handle.write('{0}\n'.format( cons))
-
-##                row=[key, len(cons), repeat_count,  left_boundary, right_boundary, cons]
-##                annotation_table.writerow(row)
+                for cons_name in cons_dict.keys():
+                    fasta_handle.write('>{0}\n'.format(fasta_name.split('/')[-1]))
+                    fasta_handle.write('{0}\n'.format( cons_dict[cons_name]))
+                    cons_num, cons_len, cons_count=cons_name.split('_')
+                    row=[key, cons_len, cons_count,  left_boundary, right_boundary, cons_dict[cons_name]]
+                    annotation_table.writerow(row)
     annotation_handle.close()
     fasta_handle.close()
 ##        print key
@@ -1111,7 +1112,7 @@ def SetMUSCLEPath(path):
     MUSCLE_PATH= path
 
 def RunMuscle(infile, outfile, maxiters, logfile):
-    command=[MUSCLE_PATH, '-in', str( infile), '-out',str( outfile), '-maxiters', str(maxiters), '-diag']
+    command=[MUSCLE_PATH, '-in', str( infile), '-out',str( outfile), '-maxiters', str(maxiters), '-diags']
     errhandle=open(logfile, 'a')
     process=subprocess.Popen(command, stderr=errhandle)
     process.communicate()
@@ -1133,11 +1134,12 @@ def BuildConsensus(sequences, outfile, log_handle):
 
     #Limit this to tandem repeats
     tandem_repeats=[s  for s in sequences if s.tandem_flag]
+    if len(tandem_repeats)==0: return {}
     #Output sequences to *fasta
     WriteFasta(sequences, fasta_output)
     #Run the multiple alignment
     msa_output='{0}_msa.fa'.format(outfile)
-##    RunMuscle(fasta_output, msa_output, 1, log_handle)
+    RunMuscle(fasta_output, msa_output, 1, log_handle)
 
     #To do: Account for the possibility that not all repeats are well described
     #by one consensus
@@ -1147,9 +1149,9 @@ def BuildConsensus(sequences, outfile, log_handle):
     #       Not implemented
 
     #Build consensus
-##    consensus_sequence=GetConsensusFromFasta(msa_output)
+    consensus_dict=GetConsensusFromFasta(msa_output)
 
-##    return consensus_sequence
+    return consensus_dict
 
 def ClusterMSA(sequences, threshold=.8,):
     clusters=[]
@@ -1192,7 +1194,15 @@ def ComputeMSADistance(seq1, seq2):
 
 def GetConsensusFromFasta(infile):
     seq=GetSeq(infile)
-    return GetConsensusFromSequences(seq.values())
+    clusters=ClusterMSA(seq.values())
+    consensus_dict={}
+
+    for i, cluster in enumerate( clusters):
+
+        consensus=GetConsensusFromSequences(cluster)
+        name='{0}_{1}_{2}'.format(i,len(consensus), len(cluster), )
+        consensus_dict[name]=consensus
+    return consensus_dict
 
 def GetConsensusFromSequences(seq):
     cons_array=numpy.ndarray((5, len(seq[0])))
@@ -1535,7 +1545,7 @@ def main(argv):
         param[argv[i]]= argv[i+1]
     print param
     if param=={}: return
-    TandemFinder(param['-i'], param['-o'], '' ,.8)
+    TandemFinder(param['-i'], param['-o'], param['-m'] ,.8)
 
 if __name__ == '__main__':
     main(sys.argv)
