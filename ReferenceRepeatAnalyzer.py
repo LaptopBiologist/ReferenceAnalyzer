@@ -39,7 +39,7 @@ import sys
 
 import copy
 
-
+pyplot.interactive(False)
 #Global
 MUSCLE_PATH=None
 
@@ -172,8 +172,10 @@ def TandemFinder(infile, outdir,muscle_path, threshold):
     log_file='{0}/errlog.txt'.format(outdir)
 
     repeat_dir='{0}/repeats'.format(outdir)
+    image_dir='{0}/images'.format(outdir)
     MakeDir(repeat_dir)
-    sequences=GetSeq(infile)#, rename=True)
+    MakeDir(image_dir)
+    sequences=GetSeq(infile, rename=True)
     for key in sorted( sequences.keys(), reverse=True):
 ##        if key!='3R': continue
 ##        out_dir='/'.join(outfile.split('/')[:-1])
@@ -185,7 +187,7 @@ def TandemFinder(infile, outdir,muscle_path, threshold):
         interval_list=[]
         true_intervals={}
         for period in interval_dictionary.keys():
-            true_intervals[period]=[]
+
             for interval in interval_dictionary[period]:
                 l,r=interval
                 interval_list.append([period, interval,abs( r-l)])
@@ -194,7 +196,7 @@ def TandemFinder(infile, outdir,muscle_path, threshold):
         for period, interval, interval_length in sorted_intervals:
             left, right=interval
             #Modified to return a dictionary
-            if period<20:
+            if period<30:
                 masked=MaskRepeatsOfSize(masked_seq[left:right], period, threshold)
                 masked_seq=masked_seq[:left]+masked+masked_seq[right:]
                 continue
@@ -204,30 +206,63 @@ def TandemFinder(infile, outdir,muscle_path, threshold):
             repeat_count=0
             left_boundary, right_boundary=numpy.inf, 0
             for major_period in repeat_dict.keys():
+                if true_intervals.has_key(major_period)==False:
+                    true_intervals[major_period]=[]
                 repeat_list=repeat_dict[major_period]
+                left_boundaries, right_boundaries=[],[]
                 for i in range(len(repeat_list)):
                     repeat_list[i].left+=left
                     repeat_list[i].right+=left
                     repeat_list[i].chrom=key
+
                     #Determine the correct boundaries of the array
                     if repeat_list[i].tandem_flag==True:
                         repeat_count+=1
-                        left_boundary=min((left_boundary, repeat_list[i].left))
-                        right_boundary=max((right_boundary, repeat_list[i].right))
+                        left_boundaries.append( repeat_list[i].left)
+                        right_boundaries.append( repeat_list[i].right)
+                        true_intervals[major_period].append((repeat_list[i].left, repeat_list[i].right))
+##                left_boundaries=numpy.array(sorted( list(set( left_boundaries))))
+####                right_boundaries=numpy.array(right_boundaries)[sort_ind]
+##                boundary_dist=numpy.diff(left_boundaries)
+##                array_breaks=[0]+ list(numpy.where(boundary_dist>major_period*5)[0]+1)+[len(left_boundaries)-1]
+##                if major_period>5000: print left_boundaries
+####                print array_breaks
+##                array_list=[]
+##                for i in range(len( array_breaks)-1):
+##                    left_edge=left_boundaries[ array_breaks[i]]
+##                    right_edge=left_boundaries[ array_breaks[i+1]]+major_period
+##
+##                    array_list.append((left_edge, right_edge))
+##                    true_intervals[major_period].append((left_edge, right_edge))
+##                print array_list
+                left_boundary=min(left_boundaries )
+                right_boundary=max(right_boundaries)
+                print left_boundary, right_boundary
 ##                name_root="Chr={0}_period={1}".format(key, period)
                 if repeat_count==0: continue
-                true_intervals[period].append((left_boundary, right_boundary))
+
                 #Build consensus
                 fasta_name='{0}/{1}_{2}_{3}_{4}'.format(repeat_dir, key.split('_')[0], major_period, left_boundary, right_boundary)
                 cons_dict=BuildConsensus(repeat_list, fasta_name, log_file)
 
             #Write consensus
                 for cons_name in cons_dict.keys():
-                    fasta_handle.write('>{0}\n'.format(fasta_name.split('/')[-1]))
+                    chrom, period, left_boundary, right_boundary= fasta_name.split('/')[-1].split('_')
+                    cons_num, cons_len, cons_count, left_boundary, right_boundary=cons_name.split('_')
+##                    true_intervals[major_period].append((left_boundary, right_boundary))
+                    seq_name='{0}_{1}_{2}_{3}_{4}'.format(chrom,cons_len, cons_count,  left_boundary, right_boundary )
+                    fasta_handle.write('>{0}\n'.format(seq_name))
                     fasta_handle.write('{0}\n'.format( cons_dict[cons_name]))
-                    cons_num, cons_len, cons_count=cons_name.split('_')
+
                     row=[key, cons_len, cons_count,  left_boundary, right_boundary, cons_dict[cons_name]]
                     annotation_table.writerow(row)
+        PlotTandems(true_intervals)
+        image_file='{0}/{1}.png'.format(image_dir, key)
+        pyplot.savefig(image_file)
+##        pyplot.yscale('symlog')
+##        image_file='{0}/{1}_log.png'.format(image_dir, key)
+##        pyplot.savefig(image_file)
+        pyplot.close()
     annotation_handle.close()
     fasta_handle.close()
 ##        print key
@@ -427,11 +462,12 @@ def GroupOverlappingIntervals(intervals):
 def PlotTandems(per_dict):
 ##    for scale in per_dict.keys():
     for rpt_len in per_dict.keys():
+        if rpt_len<=0: continue
         for l,r in per_dict[rpt_len]:
             pyplot.plot((l,r), (rpt_len, rpt_len), c='black', alpha=1)
     pyplot.ylabel('Repeat Unit Length')
     pyplot.xlabel('Position')
-    pyplot.show()
+##    pyplot.show()
 ##def PlotTandems(per_dict):
 ##    for scale in per_dict.keys():
 ##        for rpt_len in per_dict[scale].keys():
@@ -920,6 +956,7 @@ def GetRepeatsInInterval(seq, period, threshold, masked=None):
     masked_seq=copy.copy( seq)
     checked_rpts=set()
     identified_rpts=[0]*3
+    last_len=len(candidate_rpts)+1
     while len( candidate_rpts)>0:
 ##    for rpt_info in candidate_rpts:
 ##    while len()
@@ -929,6 +966,9 @@ def GetRepeatsInInterval(seq, period, threshold, masked=None):
         print "N prop=", float( masked_seq[l:r].count('N'))/(r-l)
 ##        if float( masked_seq[l:r].count('N'))/(r-l)>.1: continue
 
+        if len( checked_rpts&set(rpt))>0:
+            del candidate_rpts[0]
+            continue
         checked_rpts.add(rpt)
 
         identified_rpts, masked, rpt_len=ExtractRepeatFromArray(seq, masked_seq, rpt)
@@ -945,6 +985,9 @@ def GetRepeatsInInterval(seq, period, threshold, masked=None):
         print len(rpt), "Masked sequence:", (numpy.fromstring(masked_seq, '|S1')=='N').sum()
         identified_rpts=[1]*3
         candidate_rpts=ExtractRepeatsOfSize(masked_seq, period, threshold)
+        if len(candidate_rpts)>=last_len:
+            break
+        last_len=len(candidate_rpts)
 ##        candidate_rpts=list(set(candidate_rpts)-checked_rpts)
 ##        repeat_list+=identified_rpts
 ##        if len(identified_rpts)==0: break
@@ -965,7 +1008,7 @@ def FindAdditionalPeriods(distance_list,exclude, cutoff=3):
     counter=collections.Counter(distance_list)
     period_list=[]
     for key in counter.keys():
-        if counter[key]>cutoff and key!=exclude:
+        if counter[key]>=cutoff and key!=exclude:
             period_list.append(key)
     return sorted( period_list)
 
@@ -980,8 +1023,6 @@ def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_l
     #It obvious from examination of identity_signals that heuristics could be
     #devised to identify indels. Such a heuristic should be incorporated here.
 
-##    repeat_length=len(repeat)
-
     hits=numpy.where(identity_signal>=threshold)[0]
 
     #If no hits, terminate
@@ -990,8 +1031,9 @@ def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_l
 
     #Compute the distance between adjacent hits--the actual periodicity of the repeat
     distances=numpy.diff(hits)
+
     #Determine the most frequent periodicity
-##    mode_distance,repeat_count=scipy.stats.mode(distance_between_hits)
+
     #If the most frequent periodicity is larger than the length of the query repeat
     #the query might be part of a higher-order repeat. However, if there aren't a lot
     #of hits, this might just reflect dispersed repeats or large insertions, and
@@ -999,35 +1041,30 @@ def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_l
     #So, if the most frequent periodicity is longer than expected and occurs at least
     #3 times, update the expected periodicty to reflect that, otherwise determine
     #expected periodicity from the query repeat
-
     periods_list=[len(query)]
     periods_list+=FindAdditionalPeriods(distances, len(query))
-
-
-##    print expected_periodicity
-
-
-
     repeat_list={}
-
-    #This counts the number of consecutive repeats
-    consecutive_repeats=0
     for expected_periodicity in periods_list:
+
+        #This counts the number of consecutive repeats
+        consecutive_repeats=0
         hits=numpy.where(identity_signal>=threshold)[0]
         if len(hits)==0:
-            return repeat_list, seq_array, expected_periodicity
-        distances=numpy.diff(hits)
-        distance_between_hits=numpy.hstack((distances , [expected_periodicity]))
+            continue
+        distance_between_hits=numpy.diff(hits)
+##        distance_between_hits=numpy.hstack((distances))
         for index, distance in enumerate( distance_between_hits):
             #If the distance to the next repeat is within 105% of the expected repeat length
             #this is part of a tandem array. Extract the repeat, mask it, and increment
             #the consecutive repeat counter
+            tandem=False
             if distance<=min_length:
                 #Really want to ignore very simple repeats. Skip AND mask.
                 left, right=hits[index],hits[index]+distance
                 seq_array[left:right]='N'
+                identity_signal[hits[index]]=0
                 continue
-            if distance<=expected_periodicity*1.05:
+            if distance<=expected_periodicity*1.05 and distance>expected_periodicity*.95:
                 left, right=hits[index],hits[index]+distance
                 tandem=True
                 consecutive_repeats+=1
@@ -1036,19 +1073,29 @@ def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_l
                 left, right= hits[index],hits[index]+expected_periodicity
                 tandem=True
                 consecutive_repeats=0
-
-            else:
-                left, right= hits[index],hits[index]+expected_periodicity
-                tandem=False
-
-            repeat_seq=sequence[left: right]
-            if repeat_list.has_key(expected_periodicity)==False:
-                repeat_list[expected_periodicity]=[]
+##
+##            else:
+##                left, right= hits[index],hits[index]+expected_periodicity
+##                tandem=False
             if tandem==True:
+                repeat_seq=sequence[left: right]
+                if repeat_list.has_key(expected_periodicity)==False:
+                    repeat_list[expected_periodicity]=[]
+                if tandem==True:
+                    repeat_list[expected_periodicity].append(ReferenceRepeat(repeat_seq, left, right,tandem))
+                    seq_array[left:right]='N'
+                    identity_signal[hits[index]]=0
+        if consecutive_repeats>0:
+                left, right= hits[-1],hits[-1]+expected_periodicity
+                tandem = True
+                consecutive_repeats = 0
+                repeat_seq = sequence[left: right]
+                if repeat_list.has_key(expected_periodicity)==False:
+                    repeat_list[expected_periodicity]=[]
+
                 repeat_list[expected_periodicity].append(ReferenceRepeat(repeat_seq, left, right,tandem))
                 seq_array[left:right]='N'
                 identity_signal[hits[index]]=0
-
     masked_sequence=''.join(seq_array)
     return repeat_list, seq_array, expected_periodicity
 
@@ -1163,15 +1210,15 @@ def ClusterMSA(sequences, threshold=.8,):
     chr_list=[]
     while len(sequences)>0  :
         count+=1
-##        try:
-        clusters.append([numpy.fromstring(sequences[0], '|S1')])
+
+        clusters.append([sequences[0]])
 
 ##        except:
 ##            break
         cluster_ind=[0]
         for s in range(1,len(sequences)):
             #Find the best alignment betwen the sequecnes using a heuristic
-            perc_id=ComputeMSADistance(sequences[ s], clusters[-1][0])
+            perc_id=ComputeMSADistance(sequences[ s].seq, clusters[-1][0].seq)
 
             #Check whether the percent identity of the match exceeds a threshold
             if perc_id>=threshold:
@@ -1194,13 +1241,25 @@ def ComputeMSADistance(seq1, seq2):
 
 def GetConsensusFromFasta(infile):
     seq=GetSeq(infile)
-    clusters=ClusterMSA(seq.values())
+    class FastaSeq():
+        def __init__(self, name,sequence):
+            self.name=name
+            self.left=int( name.split('_')[-2])
+            self.right=int( name.split('_')[-1])
+            self.seq=sequence
+    seq_dict=[]
+    for key in seq.keys():
+        seq_dict.append( FastaSeq(key, seq[key]))
+    clusters=ClusterMSA(seq_dict)
     consensus_dict={}
 
     for i, cluster in enumerate( clusters):
+        left_edges=[c.left for c in cluster]
+        right_edges=[c.right for c in cluster]
+        sequences=[c.seq for s in cluster]
+        consensus=GetConsensusFromSequences(sequences)
 
-        consensus=GetConsensusFromSequences(cluster)
-        name='{0}_{1}_{2}'.format(i,len(consensus), len(cluster), )
+        name='{0}_{1}_{2}_{3}_{4}'.format(i,len(consensus), len(cluster), min(left_edges), max(right_edges) )
         consensus_dict[name]=consensus
     return consensus_dict
 

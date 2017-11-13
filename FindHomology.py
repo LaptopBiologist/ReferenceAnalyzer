@@ -45,7 +45,7 @@ def MakeDir(newdir):
 
 
 
-def GetSeq(ref, upper=False, rename=False, clean_name=True):
+def GetSeq(ref, upper=False, rename=False, clean_name=True, string=False):
 
     """Reads a fasta, returns of a dictionary of strings keyed by entry name."""
     if ref.split('.')[-1]=='gz':
@@ -56,15 +56,17 @@ def GetSeq(ref, upper=False, rename=False, clean_name=True):
     SeqLen={}
     for rec in lib:
 ##        if refName.count(rec.name)==0: continue
+        if string==True: sequence=str( rec.seq)
+        else: sequence=rec
         if rename==True:
             name=rec.description.split(' ')[1].split('=')[1]
             print name
-            SeqLen[CleanName(name)]=str( rec.seq)
+            SeqLen[CleanName(name)]=sequence
         else:
             if clean_name==True:
-                SeqLen[CleanName(rec.name)]=str( rec.seq)
+                SeqLen[CleanName(rec.name)]=sequence
             else:
-                SeqLen[rec.name]=str( rec.seq)
+                SeqLen[rec.name]=sequence
         if upper==True: SeqLen[CleanName(rec.name)]=SeqLen[CleanName(rec.name)].upper()
     handle.close()
     return SeqLen
