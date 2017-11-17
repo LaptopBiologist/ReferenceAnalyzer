@@ -45,6 +45,7 @@ import copy
 pyplot.interactive(False)
 #Global
 MUSCLE_PATH=None
+import matplotlib
 
 class ReferenceRepeat():
     def __init__(self, sequence, left, right, tandem_flag):
@@ -1127,63 +1128,73 @@ def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_l
     #3 times, update the expected periodicty to reflect that, otherwise determine
     #expected periodicity from the query repeat
 ##    periods_list=[len(query)]
-    periods_list=FindAdditionalPeriods(identity_signal, distances, len(query), threshold)
+##    periods_list=FindAdditionalPeriods(identity_signal, distances, len(query), threshold)
     repeat_list={}
-    if periods_list==[]: periods_list=[len(query)]
-    for expected_periodicity in sorted( periods_list, reverse=True):
+##    if periods_list==[]: periods_list=[len(query)]
+    for perc_id in numpy.arange(1,.8, -.01):
+        period_list=IdentifyPeriods(identity_signal, perc_id)
+        for expected_periodicity,counts in sorted( period_list, reverse=True):
 
-        #This counts the number of consecutive repeats
-        consecutive_repeats=0
-        hits=numpy.where(identity_signal>=threshold)[0]
-        if len(hits)==0:
-            continue
-        distance_between_hits=numpy.diff(hits)
-##        distance_between_hits=numpy.hstack((distances))
-        for index, distance in enumerate( distance_between_hits):
-            #If the distance to the next repeat is within 105% of the expected repeat length
-            #this is part of a tandem array. Extract the repeat, mask it, and increment
-            #the consecutive repeat counter
-            tandem=False
-            if distance<=min_length:
-                #Really want to ignore very simple repeats. Skip AND mask.
-                left, right=hits[index],hits[index]+distance
-                seq_array[left:right]='N'
-                identity_signal[hits[index]]=0
+            #This counts the number of consecutive repeats
+            consecutive_repeats=0
+            hits=numpy.where(identity_signal>=threshold)[0]
+            if len(hits)==0:
                 continue
-            if distance<=expected_periodicity*1.15 and distance>expected_periodicity*.85:
-                left, right=hits[index],hits[index]+distance
-                tandem=True
-                consecutive_repeats+=1
+            distance_between_hits=numpy.diff(hits)
+    ##        distance_between_hits=numpy.hstack((distances))
+            for index, distance in enumerate( distance_between_hits):
+                #If the distance to the next repeat is within 105% of the expected repeat length
+                #this is part of a tandem array. Extract the repeat, mask it, and increment
+                #the consecutive repeat counter
+                tandem=False
+                if distance<=min_length:
+                    #Really want to ignore very simple repeats. Skip AND mask.
+                    left, right=hits[index],hits[index]+distance
+                    seq_array[left:right]='N'
+                    identity_signal[hits[index]]=0
+                    continue
+                if distance<=expected_periodicity*1.15 and distance>expected_periodicity*.85:
+                    left, right=hits[index],hits[index]+distance
+                    tandem=True
+                    consecutive_repeats+=1
 
-            elif consecutive_repeats>0:
-                left, right= hits[index],hits[index]+expected_periodicity
-                tandem=True
-                consecutive_repeats=0
-##
-##            else:
-##                left, right= hits[index],hits[index]+expected_periodicity
-##                tandem=False
-            if tandem==True:
-                repeat_seq=sequence[left: right]
-                if repeat_list.has_key(expected_periodicity)==False:
-                    repeat_list[expected_periodicity]=[]
+                elif consecutive_repeats>0:
+                    left, right= hits[index],hits[index]+expected_periodicity
+                    tandem=True
+                    consecutive_repeats=0
+    ##
+    ##            else:
+    ##                left, right= hits[index],hits[index]+expected_periodicity
+    ##                tandem=False
                 if tandem==True:
+                    repeat_seq=sequence[left: right]
+                    if repeat_list.has_key(expected_periodicity)==False:
+                        repeat_list[expected_periodicity]=[]
+                    if tandem==True:
+                        repeat_list[expected_periodicity].append(ReferenceRepeat(repeat_seq, left, right,tandem))
+                        seq_array[left:right]='N'
+                        identity_signal[hits[index]]=0
+            if consecutive_repeats>0:
+                    left, right= hits[-1],hits[-1]+expected_periodicity
+                    tandem = True
+                    consecutive_repeats = 0
+                    repeat_seq = sequence[left: right]
+                    if repeat_list.has_key(expected_periodicity)==False:
+                        repeat_list[expected_periodicity]=[]
+
                     repeat_list[expected_periodicity].append(ReferenceRepeat(repeat_seq, left, right,tandem))
                     seq_array[left:right]='N'
                     identity_signal[hits[index]]=0
-        if consecutive_repeats>0:
-                left, right= hits[-1],hits[-1]+expected_periodicity
-                tandem = True
-                consecutive_repeats = 0
-                repeat_seq = sequence[left: right]
-                if repeat_list.has_key(expected_periodicity)==False:
-                    repeat_list[expected_periodicity]=[]
+    period_keys=HierarchicalCluster(repeat_list.keys(),.1)
 
-                repeat_list[expected_periodicity].append(ReferenceRepeat(repeat_seq, left, right,tandem))
-                seq_array[left:right]='N'
-                identity_signal[hits[index]]=0
+    repeat_dict={}
+    for key_list in period_keys:
+        mean_key=int(numpy.mean(key_list))
+        repeat_dict[mean_key]=[]
+        for key in key_list:
+            repeat_dict[mean_key]+=repeat_list[key]
     masked_sequence=''.join(seq_array)
-    return repeat_list, seq_array, expected_periodicity
+    return repeat_dict, seq_array, expected_periodicity
 
 def LaggedUngappedAlignment(query, target):
 
@@ -1720,14 +1731,25 @@ def ArrayToMatrix(seq_array, repeat_size):
     return seq_matrix
 
 
+
+
 def IdentifyPeriods(signal, threshold=.95):
     hits=numpy.where(signal>=threshold)[0]
+    if len(hits)==0:
+        return []
     distance=numpy.diff(hits)
+    if len( distance)==0:
+        return []
     clusters=HierarchicalCluster(distance,.1)
-    periods=[( numpy.mean(c), len(c)) for c in clusters]
+    periods=[( numpy.mean(c), len(c)) for c in clusters if len(c)>3]
     return periods
 
-
+def ScoreFunction(value, cluster):
+    min_cluster=numpy.min(cluster)
+    max_cluster=numpy.max(cluster)
+    numerator=max(value, max_cluster)
+    denominator=min(value, min_cluster)
+    return float( numerator) /float( denominator)
 
 def HierarchicalCluster(lengths, threshold):
     """This takes a list of lengths and clusters them as follows:
@@ -1737,21 +1759,104 @@ def HierarchicalCluster(lengths, threshold):
     sort_ind=numpy.argsort(lengths)
     lengths=lengths[sort_ind].astype(float)
 
-
-
-
-
     distances=abs(numpy.diff(lengths))
     midpoints=(lengths[1:]+lengths[:-1])/2
     score=distances/(2*midpoints)
 ##    print score*100
     clusters=[[lengths[0]]]
+
     for i,s in enumerate(lengths):
-        score=s/ min(clusters[-1])
+##        score=s/ min(clusters[-1])
+        score=ScoreFunction(s, clusters[-1])
         if score<1+threshold: clusters[-1].append(lengths[ i])
         else:clusters.append([lengths[ i]])
+
     return clusters
 
+class ModePath():
+    def __init__(self, mode, count, perc_id):
+        self.value_list=[mode]
+        self.count_list=[count]
+        self.perc_id_list=[perc_id]
+    def addmode(self, mode, count, perc_id):
+        self.value_list.append(mode)
+        self.count_list.append(count)
+        self.perc_id_list.append(perc_id)
+    def checkmode(self, mode):
+        min_value=numpy.min(self.value_list).astype(float)
+        return mode/min_value
+    def checkcount(self, count):
+        score=ScoreFunction(count, self.count_list)
+##        min_value=numpy.min(self.count_list).astype(float)
+        return score
+    def clustercounts(self, threshold=.1, min_lifespan=.03):
+        """Clusters the mode path to identify intervals of percent identity
+        where the number of hits is stable."""
+        clusters=[]
+        for i, count in enumerate( self.count_list):
+            if i==0:
+                clusters.append(ModePath(self.value_list[i], self.count_list[i], self.perc_id_list[i]))
+                continue
+            score=clusters[-1].checkcount(self.count_list[i])
+##            print score
+            if  (1-threshold<=score) and score<=(1+threshold):
+                clusters[-1].addmode(self.value_list[i], self.count_list[i], self.perc_id_list[i])
+            else:
+                clusters.append(ModePath(self.value_list[i], self.count_list[i], self.perc_id_list[i]))
+        #Remove shortlived modes:
+        final_clusters=[]
+        for m in clusters:
+            lifespan=numpy.max(m.perc_id_list)-numpy.min(m.perc_id_list)
+            if lifespan>=min_lifespan:
+                final_clusters.append(m)
+
+        return final_clusters
+
+
+
+def ConstructModeTree(sig, min_identity, cluster_threshold=.1):
+    mode_list=[]
+
+    for perc_id in numpy.arange(1, min_identity,-.005):
+        modes=IdentifyPeriods(sig, perc_id)
+
+        try:
+            modes, counts=zip(*modes)
+        except: continue
+
+        for i, mode in enumerate( modes):
+            new_cluster=True
+            for m in mode_list:
+                if m.checkmode(mode)<1+cluster_threshold  and m.checkmode(mode)>1-cluster_threshold :
+                    new_cluster=False
+                    m.addmode(mode, counts[i], perc_id)
+            if new_cluster==True:
+                mode_list.append(ModePath(mode, counts[i], perc_id ))
+
+##        mode_list.append(modes)
+##        print len(modes)
+##        pyplot.scatter(modes, [perc_id]*len(modes), s=numpy.array( counts )/1.)
+
+    mode_list=ClusterModeTree(mode_list)
+    PlotModeTree(mode_list)
+    return mode_list
+
+def ClusterModeTree(modetree):
+    newtree=[]
+    for modepath in modetree:
+        newtree+=modepath.clustercounts()
+    return newtree
+
+def PlotModeTree(modetree):
+    colors=matplotlib.colors.cnames.keys()
+    numpy.random.shuffle(colors)
+    for i, branch in enumerate( modetree):
+        pyplot.scatter(branch. value_list, branch.perc_id_list, s=branch.count_list, c=colors[i])
+    pyplot.show()
+
+    for i, branch in enumerate( modetree):
+        pyplot.plot(branch. perc_id_list, branch.count_list, c=colors[i])
+    pyplot.show()
 def ClusterNeighbors():
     pass
 
