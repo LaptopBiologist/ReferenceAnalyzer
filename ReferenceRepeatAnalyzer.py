@@ -32,10 +32,13 @@ import subprocess
 import csv
 import os
 import collections
+##import ReferenceAnalyzer.FindHomology
+
 
 import gzip
 
 import sys
+import shutil
 
 import copy
 
@@ -96,6 +99,36 @@ class RollingKernelAverage(BaseEstimator):
 def MakeDir(newdir):
     if os.path.exists(newdir)==False:
         os.mkdir(newdir)
+
+def splitFile(infile, tempDir, limit=500):
+    MakeDir(tempDir)
+    refSeq=GetSeq(infile)
+    inDir='/'.join(infile.split('/')[:-1])
+    root=infile.split('/')[-1]
+    rootname='.'.join(root.split('.')[:-1])
+    ext=root.split('.')[-1]
+    fileCount=1
+    outfile="{0}/{1}_temp_{2}.{3}".format(tempDir, rootname, fileCount, ext)
+    outHandle=open(outfile, 'w')
+    count=0
+    print len(refSeq)
+    for key in refSeq:
+        if count>=limit:
+            print count
+            outHandle.close()
+            fileCount+=1
+            count=0
+            outfile="{0}/{1}_temp_{2}.{3}".format(tempDir, rootname, fileCount, ext)
+            print outfile
+            outHandle=open(outfile, 'w')
+        seq=str( refSeq[key])
+        name= CleanName(key)
+
+        outHandle.write('>'+name+'\n')
+        outHandle.write(seq+'\n')
+        count+=1
+
+    outHandle.close()
 
 def CountSequences(k=6, alphabet='ATGC'):
     """Enumerate all possible k-length products of the alphabet and then
@@ -971,7 +1004,7 @@ def GetRepeatsInInterval(seq, period, threshold, masked=None):
             continue
         checked_rpts.add(rpt)
 
-        identified_rpts, masked, rpt_len=ExtractRepeatFromArray(seq, masked_seq, rpt)
+        identified_rpts, masked, rpt_len=ExtractRepeatFromArray(seq, masked_seq, rpt, threshold=threshold)
     ##            del masked_seq
         masked_seq=''.join( masked)
         for rpt_len in identified_rpts.keys():
@@ -1004,13 +1037,65 @@ def PickPeriods(autocorr):
     beta=slope*length_auto
     return test-( numpy.arange(length_auto)*slope+beta)
 
-def FindAdditionalPeriods(distance_list,exclude, cutoff=3):
+def FindAdditionalPeriods(identity_signal ,distance_list,exclude, threshold, cutoff=3):
     counter=collections.Counter(distance_list)
+
     period_list=[]
+    count_list=[]
+    period_set=set()
     for key in counter.keys():
-        if counter[key]>=cutoff and key!=exclude:
-            period_list.append(key)
-    return sorted( period_list)
+        if list(period_set).count(key)>0: continue
+##        if counter[key]<cutoff: continue
+        lengths, identities=AnalyzeHitsAtPeriod(identity_signal, key, threshold=threshold)
+        if len(lengths)<cutoff: continue
+        period_set|=set( lengths)
+        average_ident=numpy.median(identities)
+        print "\tPeriod: ", key, " Stats:", numpy.sum(lengths), average_ident, numpy.sum(lengths) * average_ident
+
+        count_list.append(numpy.sum(lengths) * average_ident)
+        period_list.append(key)
+    sort_ind=numpy.argsort(count_list)[::-1]
+
+    pyplot.plot( identity_signal)
+    pyplot.show()
+    return list (numpy.array(period_list)[sort_ind])
+
+
+def AnalyzeHitsAtPeriod(identity_signal, expected_periodicity, threshold ):
+
+    hit_length=[]
+    hit_identity=[]
+    #This counts the number of consecutive repeats
+    consecutive_repeats=0
+    hits=numpy.where(identity_signal>=threshold)[0]
+    if len(hits)==0:
+        return
+    distance_between_hits=numpy.diff(hits)
+##        distance_between_hits=numpy.hstack((distances))
+    dist_tracker=0
+    for index, distance in enumerate( distance_between_hits):
+        #If the distance to the next repeat is within 105% of the expected repeat length
+        #this is part of a tandem array. Extract the repeat, mask it, and increment
+        #the consecutive repeat counter
+        tandem=False
+
+        if distance<=expected_periodicity*1.15 and distance>expected_periodicity*.85:
+            hit_length.append(distance)
+            hit_identity.append(identity_signal[hits[index]] )
+            consecutive_repeats+=1
+
+        elif consecutive_repeats>0:
+            hit_length.append(distance)
+            hit_identity.append(identity_signal[hits[index]] )
+            #stuff
+            consecutive_repeats=0
+
+
+    if consecutive_repeats>0:
+        hit_length.append(expected_periodicity)
+        hit_identity.append(identity_signal[hits[-1]] )
+    return hit_length, hit_identity
+
 
 def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_length=30):
 
@@ -1041,10 +1126,11 @@ def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_l
     #So, if the most frequent periodicity is longer than expected and occurs at least
     #3 times, update the expected periodicty to reflect that, otherwise determine
     #expected periodicity from the query repeat
-    periods_list=[len(query)]
-    periods_list+=FindAdditionalPeriods(distances, len(query))
+##    periods_list=[len(query)]
+    periods_list=FindAdditionalPeriods(identity_signal, distances, len(query), threshold)
     repeat_list={}
-    for expected_periodicity in periods_list:
+    if periods_list==[]: periods_list=[len(query)]
+    for expected_periodicity in sorted( periods_list, reverse=True):
 
         #This counts the number of consecutive repeats
         consecutive_repeats=0
@@ -1064,7 +1150,7 @@ def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_l
                 seq_array[left:right]='N'
                 identity_signal[hits[index]]=0
                 continue
-            if distance<=expected_periodicity*1.05 and distance>expected_periodicity*.95:
+            if distance<=expected_periodicity*1.15 and distance>expected_periodicity*.85:
                 left, right=hits[index],hits[index]+distance
                 tandem=True
                 consecutive_repeats+=1
@@ -1165,6 +1251,44 @@ def RunMuscle(infile, outfile, maxiters, logfile):
     process.communicate()
     errhandle.close()
 
+def RunProfileProfileAlignment(infile1, infile2, outfile, logfile):
+    command=[MUSCLE_PATH, '-profile', '-in1', str( infile1), '-in2', str(infile2), '-out',str( outfile)]
+    errhandle=open(logfile, 'a')
+    process=subprocess.Popen(command, stderr=errhandle)
+    process.communicate()
+    errhandle.close()
+
+def MultipleSequenceAlignment(infile, outfile, maxiters, logfile):
+
+    seq=GetSeq(infile)
+    if len (seq.keys())<500:
+        RunMuscle(infile, outfile, maxiters, logfile)
+
+    else:
+        print "\tSplitting *.fasta..."
+        #Split the output into 1000 sequence files
+        temp_dir='{0}_temp'.format( '.'.join( infile.split('.')[:-1]))
+        splitFile(infile, temp_dir)
+
+        #Get MSA for each file
+        file_list=os.listdir(temp_dir)
+        out_file_list=[]
+        for f in file_list:
+            print "\tRunning MSA for {0}...".format(f)
+            outname='{0}/{1}_out.fa'.format(temp_dir, '.'.join( f.split('.')[:-1]))
+            RunMuscle('{0}/{1}'.format(temp_dir, f), outname, maxiters, logfile )
+            out_file_list.append(outname)
+
+        #Combine the MSAs with profile-profile alignments
+        print "\tCombining MSAs..."
+        RunProfileProfileAlignment(out_file_list[0],out_file_list[1], outfile, logfile)
+        if len(out_file_list)>2:
+            for i,v in enumerate(out_file_list[2:]):
+                RunProfileProfileAlignment(v,outfile, outfile, logfile)
+        print "\tRemoving temporary files..."
+        shutil.rmtree(temp_dir)
+        print '\tDone.'
+
 def WriteFasta(sequences, outfile):
     outhandle=open(outfile, 'w')
     for i,s in  enumerate( sequences ):
@@ -1182,11 +1306,13 @@ def BuildConsensus(sequences, outfile, log_handle):
     #Limit this to tandem repeats
     tandem_repeats=[s  for s in sequences if s.tandem_flag]
     if len(tandem_repeats)==0: return {}
+
     #Output sequences to *fasta
     WriteFasta(sequences, fasta_output)
+
     #Run the multiple alignment
     msa_output='{0}_msa.fa'.format(outfile)
-    RunMuscle(fasta_output, msa_output, 1, log_handle)
+    MultipleSequenceAlignment(fasta_output, msa_output, 1, log_handle)
 
     #To do: Account for the possibility that not all repeats are well described
     #by one consensus
@@ -1593,6 +1719,39 @@ def ArrayToMatrix(seq_array, repeat_size):
 
     return seq_matrix
 
+
+def IdentifyPeriods(signal, threshold=.95):
+    hits=numpy.where(signal>=threshold)[0]
+    distance=numpy.diff(hits)
+    clusters=HierarchicalCluster(distance,.1)
+    periods=[( numpy.mean(c), len(c)) for c in clusters]
+    return periods
+
+
+
+def HierarchicalCluster(lengths, threshold):
+    """This takes a list of lengths and clusters them as follows:
+        For each adjacent pair, it computes the  """
+
+    #Sort the lengths and sequences by length in ascending order
+    sort_ind=numpy.argsort(lengths)
+    lengths=lengths[sort_ind].astype(float)
+
+
+
+
+
+    distances=abs(numpy.diff(lengths))
+    midpoints=(lengths[1:]+lengths[:-1])/2
+    score=distances/(2*midpoints)
+##    print score*100
+    clusters=[[lengths[0]]]
+    for i,s in enumerate(lengths):
+        score=s/ min(clusters[-1])
+        if score<1+threshold: clusters[-1].append(lengths[ i])
+        else:clusters.append([lengths[ i]])
+    return clusters
+
 def ClusterNeighbors():
     pass
 
@@ -1604,7 +1763,7 @@ def main(argv):
         param[argv[i]]= argv[i+1]
     print param
     if param=={}: return
-    TandemFinder(param['-i'], param['-o'], param['-m'] ,.8)
+    TandemFinder(param['-i'], param['-o'], param['-m'] ,.85)
 
 if __name__ == '__main__':
     main(sys.argv)
