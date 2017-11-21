@@ -209,8 +209,8 @@ def TandemFinder(infile, outdir,muscle_path, threshold):
     image_dir='{0}/images'.format(outdir)
     MakeDir(repeat_dir)
     MakeDir(image_dir)
-    sequences=GetSeq(infile, rename=True)
-    for key in sorted( sequences.keys(), reverse=True):
+    sequences=GetSeq(infile)#, rename=True)
+    for key in sorted( sequences.keys(), reverse=False):
 ##        if key!='3R': continue
 ##        out_dir='/'.join(outfile.split('/')[:-1])
 ##        out_root='.'.join( outfile.split('/')[-1].split('.')[:-1])
@@ -244,17 +244,21 @@ def TandemFinder(infile, outdir,muscle_path, threshold):
                     true_intervals[major_period]=[]
                 repeat_list=repeat_dict[major_period]
                 left_boundaries, right_boundaries=[],[]
+##                length_dict=
                 for i in range(len(repeat_list)):
                     repeat_list[i].left+=left
                     repeat_list[i].right+=left
                     repeat_list[i].chrom=key
 
                     #Determine the correct boundaries of the array
+
                     if repeat_list[i].tandem_flag==True:
                         repeat_count+=1
                         left_boundaries.append( repeat_list[i].left)
                         right_boundaries.append( repeat_list[i].right)
-                        true_intervals[major_period].append((repeat_list[i].left, repeat_list[i].right))
+                        if true_intervals.has_key(len(repeat_list[i].sequence))==False:
+                            true_intervals[ len(repeat_list[i].sequence)]=[]
+                        true_intervals[len(repeat_list[i].sequence)].append((repeat_list[i].left, repeat_list[i].right))
 ##                left_boundaries=numpy.array(sorted( list(set( left_boundaries))))
 ####                right_boundaries=numpy.array(right_boundaries)[sort_ind]
 ##                boundary_dist=numpy.diff(left_boundaries)
@@ -277,7 +281,7 @@ def TandemFinder(infile, outdir,muscle_path, threshold):
 
                 #Build consensus
                 fasta_name='{0}/{1}_{2}_{3}_{4}'.format(repeat_dir, key.split('_')[0], major_period, left_boundary, right_boundary)
-                cons_dict=BuildConsensus(repeat_list, fasta_name, log_file)
+                cons_dict=SummarizeRepeats(repeat_list, fasta_name, log_file)
 
             #Write consensus
                 for cons_name in cons_dict.keys():
@@ -1131,61 +1135,77 @@ def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_l
 ##    periods_list=FindAdditionalPeriods(identity_signal, distances, len(query), threshold)
     repeat_list={}
 ##    if periods_list==[]: periods_list=[len(query)]
-    for perc_id in numpy.arange(1,.8, -.01):
-        period_list=IdentifyPeriods(identity_signal, perc_id)
-        for expected_periodicity,counts in sorted( period_list, reverse=True):
+    possible_periods=ConstructModeTree(identity_signal,threshold)
+    if len( possible_periods)>0:
+        period_list=OrganizePeriods(possible_periods)
+        period_list.append((len(query), threshold,3))
+    else: period_list=[(len(query), threshold,3)]
+    for expected_periodicity,threshold,rpt_counts in period_list:
+        if rpt_counts<3: continue
+        expected_periodicity=int(expected_periodicity)
 
-            #This counts the number of consecutive repeats
-            consecutive_repeats=0
-            hits=numpy.where(identity_signal>=threshold)[0]
-            if len(hits)==0:
+        #This counts the number of consecutive repeats
+        consecutive_repeats=0
+        hits=numpy.where(identity_signal>=threshold)[0]
+        if len(hits)<=1:
+            continue
+        distance_between_hits=numpy.diff(hits)
+##        distance_between_hits=numpy.hstack((distances))
+        for index, distance in enumerate( distance_between_hits):
+            #If the distance to the next repeat is within 105% of the expected repeat length
+            #this is part of a tandem array. Extract the repeat, mask it, and increment
+            #the consecutive repeat counter
+            tandem=False
+            if distance<=min_length:
+                #Really want to ignore very simple repeats. Skip AND mask.
+                left, right=hits[index],hits[index]+distance
+                seq_array[left:right]='N'
+##                identity_signal[hits[index]]=0
+                identity_signal[left:right]=0
                 continue
-            distance_between_hits=numpy.diff(hits)
-    ##        distance_between_hits=numpy.hstack((distances))
-            for index, distance in enumerate( distance_between_hits):
-                #If the distance to the next repeat is within 105% of the expected repeat length
-                #this is part of a tandem array. Extract the repeat, mask it, and increment
-                #the consecutive repeat counter
-                tandem=False
-                if distance<=min_length:
-                    #Really want to ignore very simple repeats. Skip AND mask.
-                    left, right=hits[index],hits[index]+distance
-                    seq_array[left:right]='N'
-                    identity_signal[hits[index]]=0
-                    continue
-                if distance<=expected_periodicity*1.15 and distance>expected_periodicity*.85:
-                    left, right=hits[index],hits[index]+distance
-                    tandem=True
-                    consecutive_repeats+=1
+            if distance<=expected_periodicity*1.15 and distance>expected_periodicity*.85:
+                left, right=hits[index],hits[index]+distance
+                tandem=True
+                consecutive_repeats+=1
 
-                elif consecutive_repeats>0:
-                    left, right= hits[index],hits[index]+expected_periodicity
-                    tandem=True
-                    consecutive_repeats=0
-    ##
-    ##            else:
-    ##                left, right= hits[index],hits[index]+expected_periodicity
-    ##                tandem=False
-                if tandem==True:
+            elif consecutive_repeats>0:
+                left, right= hits[index],hits[index]+expected_periodicity
+                tandem=True
+                consecutive_repeats=0
+##
+##            else:
+##                left, right= hits[index],hits[index]+expected_periodicity
+##                tandem=False
+            if tandem==True:
+                try:
                     repeat_seq=sequence[left: right]
-                    if repeat_list.has_key(expected_periodicity)==False:
-                        repeat_list[expected_periodicity]=[]
-                    if tandem==True:
-                        repeat_list[expected_periodicity].append(ReferenceRepeat(repeat_seq, left, right,tandem))
-                        seq_array[left:right]='N'
-                        identity_signal[hits[index]]=0
-            if consecutive_repeats>0:
-                    left, right= hits[-1],hits[-1]+expected_periodicity
-                    tandem = True
-                    consecutive_repeats = 0
-                    repeat_seq = sequence[left: right]
-                    if repeat_list.has_key(expected_periodicity)==False:
-                        repeat_list[expected_periodicity]=[]
-
+                except:
+                    print left, right
+                    print expected_periodicity
+                    print jabber
+                if repeat_list.has_key(expected_periodicity)==False:
+                    repeat_list[expected_periodicity]=[]
+                if tandem==True:
                     repeat_list[expected_periodicity].append(ReferenceRepeat(repeat_seq, left, right,tandem))
                     seq_array[left:right]='N'
-                    identity_signal[hits[index]]=0
-    period_keys=HierarchicalCluster(repeat_list.keys(),.1)
+                    identity_signal[left:right]=0
+##                    identity_signal[hits[index]]=0
+        if consecutive_repeats>0:
+                left, right= hits[-1],hits[-1]+expected_periodicity
+                tandem = True
+                consecutive_repeats = 0
+                repeat_seq = sequence[left: right]
+                if repeat_list.has_key(expected_periodicity)==False:
+                    repeat_list[expected_periodicity]=[]
+
+                repeat_list[expected_periodicity].append(ReferenceRepeat(repeat_seq, left, right,tandem))
+                seq_array[left:right]='N'
+                identity_signal[left:right]=0
+##                identity_signal[hits[index]]=0
+    if len(repeat_list.keys())>0:
+        period_keys=HierarchicalCluster(repeat_list.keys(),.1)
+    else: return {}, seq_array, expected_periodicity
+
 
     repeat_dict={}
     for key_list in period_keys:
@@ -1308,7 +1328,7 @@ def WriteFasta(sequences, outfile):
     outhandle.close()
 
 
-def BuildConsensus(sequences, outfile, log_handle):
+def SummarizeRepeats(sequences, outfile, log_handle):
     """Takes a list of sequences and generates a consensus
     """
 
@@ -1384,6 +1404,7 @@ def GetConsensusFromFasta(infile):
             self.left=int( name.split('_')[-2])
             self.right=int( name.split('_')[-1])
             self.seq=sequence
+            self.length=len(sequence)
     seq_dict=[]
     for key in seq.keys():
         seq_dict.append( FastaSeq(key, seq[key]))
@@ -1393,6 +1414,7 @@ def GetConsensusFromFasta(infile):
     for i, cluster in enumerate( clusters):
         left_edges=[c.left for c in cluster]
         right_edges=[c.right for c in cluster]
+        lengths=[c.length for c in cluster]
         sequences=[c.seq for s in cluster]
         consensus=GetConsensusFromSequences(sequences)
 
@@ -1741,7 +1763,7 @@ def IdentifyPeriods(signal, threshold=.95):
     if len( distance)==0:
         return []
     clusters=HierarchicalCluster(distance,.1)
-    periods=[( numpy.mean(c), len(c)) for c in clusters if len(c)>3]
+    periods=[( numpy.mean(c), len(c)) for c in clusters if len(c)>5]
     return periods
 
 def ScoreFunction(value, cluster):
@@ -1751,13 +1773,76 @@ def ScoreFunction(value, cluster):
     denominator=min(value, min_cluster)
     return float( numerator) /float( denominator)
 
+def CheckOverlap(group_1, group_2):
+    x_=min(group_1)
+    x_prime=max(group_1)
+    y_=min(group_2)
+    y_prime=max(group_2)
+##    print (x_, x_prime), (y_, y_prime)
+    return (x_prime>=y_)*(x_<=y_prime)
+
+def GroupOverlappingClusters(clusters):
+    clusters=copy.copy(clusters)
+    groups=[[clusters[0]]]
+    del clusters[0]
+    count=0
+    while len(clusters)>0 and count<100:
+        count+=1
+        add_list=[]
+        for i, g in enumerate(clusters):
+            left_edges=[min(c.perc_id_list) for c in groups[-1]]
+            right_edges=[max(c.perc_id_list) for c in groups[-1]]
+            edges=left_edges+right_edges
+            if CheckOverlap([min(g.perc_id_list),max(g.perc_id_list)],edges )==1:
+                add_list.append(i)
+        if len(add_list)>0:
+            for i in add_list[::-1]:
+                groups[-1].append(clusters[i])
+                del clusters[i]
+        if len(clusters)>0:
+            groups.append([clusters[0]])
+            del clusters[0]
+##    for i, g in enumerate( groups):
+##        for c in g:
+##            print i, min(c.perc_id_list), max(c.perc_id_list), numpy.mean(c.value_list), numpy.mean(c.count_list)
+    return groups
+
+
+def OrganizePeriods(clusters):
+    #Group clusters with overlapping intervals
+    groups=GroupOverlappingClusters(clusters)
+
+
+    #Within groups sort by decreasing copy number
+    sorted_by_CN=[]
+    for g in groups:
+        sorted_by_CN.append(sorted(g, key=lambda g:numpy.mean(numpy.array( g.count_list) ), reverse=True))
+
+    #Sort groups by decreasing percent identity
+    sorted_by_PI=[]
+    for g in sorted_by_CN:
+##        print g
+##        print numpy.mean([ c.perc_id_list for c in g ])
+##        [numpy.mean( c.perc_id_list) for c in g ]
+        sort_ind=numpy.argsort( [numpy.mean( c.perc_id_list) for c in g ])[::-1]
+        sorted_by_PI.append([g[i] for i in sort_ind])
+    #Return a list of periods and percent identity cutoffs
+    percent_ident=[]
+    periods=[]
+    counts=[]
+    for g in sorted_by_PI:
+        for c in g:
+            percent_ident.append(numpy.mean(c.perc_id_list) )
+            periods.append(numpy.mean(c.value_list))
+            counts.append(len(c.value_list))
+    return zip(periods, percent_ident, counts)
 def HierarchicalCluster(lengths, threshold):
     """This takes a list of lengths and clusters them as follows:
         For each adjacent pair, it computes the  """
 
     #Sort the lengths and sequences by length in ascending order
     sort_ind=numpy.argsort(lengths)
-    lengths=lengths[sort_ind].astype(float)
+    lengths=numpy.array( lengths) [sort_ind].astype(float)
 
     distances=abs(numpy.diff(lengths))
     midpoints=(lengths[1:]+lengths[:-1])/2
@@ -1789,7 +1874,7 @@ class ModePath():
         score=ScoreFunction(count, self.count_list)
 ##        min_value=numpy.min(self.count_list).astype(float)
         return score
-    def clustercounts(self, threshold=.1, min_lifespan=.03):
+    def clustercounts(self, threshold=.1, min_lifespan=.04):
         """Clusters the mode path to identify intervals of percent identity
         where the number of hits is stable."""
         clusters=[]
@@ -1836,7 +1921,7 @@ def ConstructModeTree(sig, min_identity, cluster_threshold=.1):
 ##        mode_list.append(modes)
 ##        print len(modes)
 ##        pyplot.scatter(modes, [perc_id]*len(modes), s=numpy.array( counts )/1.)
-
+    PlotModeTree(mode_list)
     mode_list=ClusterModeTree(mode_list)
     PlotModeTree(mode_list)
     return mode_list
@@ -1868,7 +1953,7 @@ def main(argv):
         param[argv[i]]= argv[i+1]
     print param
     if param=={}: return
-    TandemFinder(param['-i'], param['-o'], param['-m'] ,.85)
+    TandemFinder(param['-i'], param['-o'], param['-m'] ,.8)
 
 if __name__ == '__main__':
     main(sys.argv)
