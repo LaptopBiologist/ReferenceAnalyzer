@@ -516,6 +516,8 @@ def RemoveRepeatsOfSize(seq, rpt_len, threshold):
     seq_array=numpy.fromstring(seq, '|S1')
     identity_signal=ShiftedIdentity(seq, rpt_len)
 
+
+
     high_identity_intervals=IdentifyHighIdentityRegions(identity_signal,threshold)
 
     for interval in high_identity_intervals:
@@ -919,7 +921,7 @@ def LookForSplits(indices):
     return intervals
 def IdentifyHighIdentityRegions(identity, threshold):
     indices=numpy.where(identity>=threshold)[0]
-    indices=numpy.array([0]+list(indices)+[len(identity)-1])
+    indices=numpy.array([-2]+list(indices)+[len(identity)+1])
 
     diff_ind=numpy.diff(indices)
 
@@ -1944,6 +1946,31 @@ def PlotModeTree(modetree):
     pyplot.show()
 def ClusterNeighbors():
     pass
+
+def AnalyzeRead(read):
+    period_list=[]
+    for j in range(5):
+
+        if len(read)<10: break
+        try:
+            autocorr=Autocorrel(read,len(read), False)
+        except:
+            break
+        pyplot.plot(autocorr)
+        pyplot.show()
+        true_period=numpy.argmax(autocorr[1:])+1
+        print true_period
+
+        #Only interested in base periodicities>3
+        #Remove repeats of this length from the sequence
+        len_seq=len(read)
+        read=RemoveRepeatsOfSize(read, true_period, .8)
+        print len(read)
+        if len_seq==len(read): break
+
+        period_list.append(true_period)
+    return period_list
+
 
 
 def main(argv):
