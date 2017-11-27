@@ -12,6 +12,8 @@ import numpy
 import scipy
 from Bio import SeqIO
 from Bio import Seq
+from Bio.Blast import NCBIXML
+
 import matplotlib
 ##matplotlib.use('Agg')
 from matplotlib import pyplot
@@ -45,6 +47,7 @@ import copy
 pyplot.interactive(False)
 #Global
 MUSCLE_PATH=None
+BLAST_PATH='c:/ncbi/blast-2.5.0+/bin/blastn.exe'
 import matplotlib
 
 class ReferenceRepeat():
@@ -1343,9 +1346,15 @@ def SummarizeRepeats(sequences, outfile, log_handle):
     #Output sequences to *fasta
     WriteFasta(sequences, fasta_output)
 
+    #If there are more than two sequences run an MSA
     #Run the multiple alignment
-    msa_output='{0}_msa.fa'.format(outfile)
-    MultipleSequenceAlignment(fasta_output, msa_output, 1, log_handle)
+    if len(tandem_repeats)>2:
+        msa_output='{0}_msa.fa'.format(outfile)
+        MultipleSequenceAlignment(fasta_output, msa_output, 1, log_handle)
+    else:
+        AlignWithBLAST(fasta_output, msa_output, log_handle)
+
+    #Otherwise, run a blast alignment:
 
     #To do: Account for the possibility that not all repeats are well described
     #by one consensus
@@ -1358,6 +1367,54 @@ def SummarizeRepeats(sequences, outfile, log_handle):
     consensus_dict=GetConsensusFromFasta(msa_output)
 
     return consensus_dict
+
+def AlignWithBLAST(infile, outfile,log_file, blastdir=BLAST_PATH):
+    sequences=GetSeq(infile)
+    seq_keys=sequences.keys()
+    temp_1='{0}_1.fa'.format('.'.join( infile.split('.')[:-1]))
+    temp_handle=open(temp_1, 'w')
+    temp_handle.write('>{0}\n').format(seq_keys[0])
+    temp_handle.write('{0}\n'.format( sequences[seq_keys[0]]))
+    temp_handle.close()
+
+    temp_2='{0}_2.fa'.format('.'.join( infile.split('.')[:-1]))
+    temp_handle=open(temp_2, 'w')
+    temp_handle.write('>{0}\n').format(seq_keys[1])
+    temp_handle.write('{0}\n'.format( sequences[seq_keys[1]]))
+    temp_handle.close()
+
+    #Align the temporary files
+    temp_out='{0}_temp.xml'.format('.' .join(outfile.split('.')[:-1]))
+    BlastSequences(temp_1, temp_2, temp_out, blastdir, log_file)
+
+    #Delete the temporary files
+    os.remove(temp_1)
+    os.remove(temp_2)
+
+    parse_handle=open(temp_out, 'r')
+    blast_parser=NCBIXML.parse(parse_handle)
+    hsps=blast_parser.next()
+
+    outhandle=open(outfile,'w')
+
+    query_name=hsps.query
+    query_seq=hsps.alignments[0].hsps[0].query
+    outhandle.write('>{0}\n'.format(query_name))
+    outhandle.write('{0}\n'.format(query_seq))
+
+    subj_name=hsps.alignments[0].hit_id
+    subj_seq=hsps.alignments[0].hsps[0].sbjct
+    outhandle.write('>{0}\n'.format(subj_name))
+    outhandle.write('{0}\n'.format(subj_seq))
+
+    outhandle.close()
+
+
+
+
+
+def BlastSequences(query,subject,outfile,blastdir, log_file):
+    subprocess.Popen([blastdir, '-query', query,'-subject', subject,'-out', outfile, '-outfmt', '5', '-max_hsps', '1' ],stderr=log_file)
 
 def ClusterMSA(sequences, threshold=.8,):
     clusters=[]
@@ -1765,7 +1822,7 @@ def IdentifyPeriods(signal, threshold=.95):
     if len( distance)==0:
         return []
     clusters=HierarchicalCluster(distance,.1)
-    periods=[( numpy.mean(c), len(c)) for c in clusters if len(c)>5]
+    periods=[( numpy.mean(c), len(c)) for c in clusters if len(c)>1]
     return periods
 
 def ScoreFunction(value, cluster):
@@ -1949,7 +2006,7 @@ def ClusterNeighbors():
 
 def AnalyzeRead(read):
     period_list=[]
-    for j in range(5):
+    for j in range(1):
 
         if len(read)<10: break
         try:
@@ -1958,18 +2015,22 @@ def AnalyzeRead(read):
             break
         pyplot.plot(autocorr)
         pyplot.show()
+        pyplot.close()
         true_period=numpy.argmax(autocorr[1:])+1
         print true_period
 
         #Only interested in base periodicities>3
         #Remove repeats of this length from the sequence
-        len_seq=len(read)
-        read=RemoveRepeatsOfSize(read, true_period, .8)
-        print len(read)
-        if len_seq==len(read): break
+        rpts=ExtractRepeatsOfSize(read, true_period,.5)
+        for r,v in rpts:
+            ccf=LaggedUngappedAlignment(r, read)
+##            return ccf
+            pyplot.plot(ccf)
+            pyplot.show()
 
-        period_list.append(true_period)
-    return period_list
+            break
+
+    return repeats
 
 
 
