@@ -212,7 +212,7 @@ def TandemFinder(infile, outdir,muscle_path, threshold):
     image_dir='{0}/images'.format(outdir)
     MakeDir(repeat_dir)
     MakeDir(image_dir)
-    sequences=GetSeq(infile)#, rename=True)
+    sequences=GetSeq(infile, rename=True)
     for key in sorted( sequences.keys(), reverse=False):
 ##        if key!='3R': continue
 ##        out_dir='/'.join(outfile.split('/')[:-1])
@@ -1113,6 +1113,8 @@ def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_l
 
     #Only search for the query repeat
     identity_signal=LaggedUngappedAlignment(query, masked_sequence)
+##    pyplot.plot(identity_signal)
+##    pyplot.show()
     seq_array=numpy.fromstring(masked_sequence, '|S1')
 
     #It obvious from examination of identity_signals that heuristics could be
@@ -1140,12 +1142,13 @@ def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_l
 ##    periods_list=FindAdditionalPeriods(identity_signal, distances, len(query), threshold)
     repeat_list={}
 ##    if periods_list==[]: periods_list=[len(query)]
-    possible_periods=ConstructModeTree(identity_signal,threshold)
+    possible_periods=ConstructModeTree(identity_signal,.8)
     if len( possible_periods)>0:
         period_list=OrganizePeriods(possible_periods)
         period_list.append((len(query), threshold,3))
     else: period_list=[(len(query), threshold,3)]
     for expected_periodicity,threshold,rpt_counts in period_list:
+        if expected_periodicity>100*len(query): continue
         if rpt_counts<3: continue
         expected_periodicity=int(expected_periodicity)
 
@@ -1182,18 +1185,18 @@ def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_l
 ##                left, right= hits[index],hits[index]+expected_periodicity
 ##                tandem=False
             if tandem==True:
-                try:
-                    repeat_seq=sequence[left: right]
-                except:
-                    print left, right
-                    print expected_periodicity
-                    print jabber
+
+                repeat_seq=sequence[left: right]
                 if repeat_list.has_key(expected_periodicity)==False:
                     repeat_list[expected_periodicity]=[]
-                if tandem==True:
-                    repeat_list[expected_periodicity].append(ReferenceRepeat(repeat_seq, left, right,tandem))
-                    seq_array[left:right]='N'
-                    identity_signal[left:right]=0
+
+                repeat_list[expected_periodicity].append(ReferenceRepeat(repeat_seq, left, right,tandem))
+                seq_array[left:right]='N'
+                identity_signal[left:right]=0
+
+
+
+
 ##                    identity_signal[hits[index]]=0
         if consecutive_repeats>0:
                 left, right= hits[-1],hits[-1]+expected_periodicity
@@ -1207,8 +1210,11 @@ def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_l
                 seq_array[left:right]='N'
                 identity_signal[left:right]=0
 ##                identity_signal[hits[index]]=0
+##    pyplot.plot(identity_signal)
+##    pyplot.show()
     if len(repeat_list.keys())>0:
         period_keys=HierarchicalCluster(repeat_list.keys(),.1)
+
     else: return {}, seq_array, expected_periodicity
 
 
@@ -1341,6 +1347,7 @@ def SummarizeRepeats(sequences, outfile, log_handle):
 
     #Limit this to tandem repeats
     tandem_repeats=[s  for s in sequences if s.tandem_flag]
+    min_len=min( [abs(s.length) for s in tandem_repeats ])
     if len(tandem_repeats)==0: return {}
 
     #Output sequences to *fasta
@@ -1348,11 +1355,14 @@ def SummarizeRepeats(sequences, outfile, log_handle):
 
     #If there are more than two sequences run an MSA
     #Run the multiple alignment
+    msa_output='{0}_msa.fa'.format(outfile)
     if len(tandem_repeats)>2:
-        msa_output='{0}_msa.fa'.format(outfile)
         MultipleSequenceAlignment(fasta_output, msa_output, 1, log_handle)
     else:
-        AlignWithBLAST(fasta_output, msa_output, log_handle)
+        #If the sequences are short, use a small word size
+        if min_len<100: word_size=7
+        else: word_size=11
+        AlignWithBLAST(fasta_output, msa_output,  log_handle,word_size)
 
     #Otherwise, run a blast alignment:
 
@@ -1368,24 +1378,24 @@ def SummarizeRepeats(sequences, outfile, log_handle):
 
     return consensus_dict
 
-def AlignWithBLAST(infile, outfile,log_file, blastdir=BLAST_PATH):
+def AlignWithBLAST(infile, outfile,log_file, word_size=11, blastdir=BLAST_PATH):
     sequences=GetSeq(infile)
     seq_keys=sequences.keys()
     temp_1='{0}_1.fa'.format('.'.join( infile.split('.')[:-1]))
     temp_handle=open(temp_1, 'w')
-    temp_handle.write('>{0}\n').format(seq_keys[0])
+    temp_handle.write('>{0}\n'.format(seq_keys[0]))
     temp_handle.write('{0}\n'.format( sequences[seq_keys[0]]))
     temp_handle.close()
 
     temp_2='{0}_2.fa'.format('.'.join( infile.split('.')[:-1]))
     temp_handle=open(temp_2, 'w')
-    temp_handle.write('>{0}\n').format(seq_keys[1])
+    temp_handle.write('>{0}\n'.format(seq_keys[1]))
     temp_handle.write('{0}\n'.format( sequences[seq_keys[1]]))
     temp_handle.close()
 
     #Align the temporary files
     temp_out='{0}_temp.xml'.format('.' .join(outfile.split('.')[:-1]))
-    BlastSequences(temp_1, temp_2, temp_out, blastdir, log_file)
+    BlastSequences(temp_1, temp_2, temp_out, blastdir,word_size, log_file)
 
     #Delete the temporary files
     os.remove(temp_1)
@@ -1394,8 +1404,10 @@ def AlignWithBLAST(infile, outfile,log_file, blastdir=BLAST_PATH):
     parse_handle=open(temp_out, 'r')
     blast_parser=NCBIXML.parse(parse_handle)
     hsps=blast_parser.next()
-
     outhandle=open(outfile,'w')
+    if len(hsps.alignments)==0: #No alignments found
+        outhandle.close()
+        return
 
     query_name=hsps.query
     query_seq=hsps.alignments[0].hsps[0].query
@@ -1413,8 +1425,11 @@ def AlignWithBLAST(infile, outfile,log_file, blastdir=BLAST_PATH):
 
 
 
-def BlastSequences(query,subject,outfile,blastdir, log_file):
-    subprocess.Popen([blastdir, '-query', query,'-subject', subject,'-out', outfile, '-outfmt', '5', '-max_hsps', '1' ],stderr=log_file)
+def BlastSequences(query,subject,outfile,blastdir, word_size, logfile):
+    errhandle=open(logfile, 'a')
+    p=subprocess.Popen([blastdir, '-query', query,'-subject', subject,'-out', outfile, '-outfmt', '5', '-max_hsps', '1', '-word_size', str(word_size) ],stderr=errhandle)
+    p.communicate()
+    errhandle.close()
 
 def ClusterMSA(sequences, threshold=.8,):
     clusters=[]
@@ -1457,6 +1472,9 @@ def ComputeMSADistance(seq1, seq2):
 
 def GetConsensusFromFasta(infile):
     seq=GetSeq(infile)
+    consensus_dict={}
+    if len(seq.keys())==0:
+        return consensus_dict
     class FastaSeq():
         def __init__(self, name,sequence):
             self.name=name
@@ -1468,7 +1486,7 @@ def GetConsensusFromFasta(infile):
     for key in seq.keys():
         seq_dict.append( FastaSeq(key, seq[key]))
     clusters=ClusterMSA(seq_dict)
-    consensus_dict={}
+
 
     for i, cluster in enumerate( clusters):
         left_edges=[c.left for c in cluster]
@@ -1814,23 +1832,14 @@ def ArrayToMatrix(seq_array, repeat_size):
 
 
 
-def IdentifyPeriods(signal, threshold=.95):
-    hits=numpy.where(signal>=threshold)[0]
-    if len(hits)==0:
-        return []
-    distance=numpy.diff(hits)
-    if len( distance)==0:
-        return []
-    clusters=HierarchicalCluster(distance,.1)
-    periods=[( numpy.mean(c), len(c)) for c in clusters if len(c)>1]
-    return periods
+
 
 def ScoreFunction(value, cluster):
-    min_cluster=numpy.min(cluster)
-    max_cluster=numpy.max(cluster)
-    numerator=max(value, max_cluster)
-    denominator=min(value, min_cluster)
-    return float( numerator) /float( denominator)
+    min_cluster=float( numpy.min(cluster))
+    max_cluster=float( numpy.max(cluster))
+    test_1=value/min_cluster
+    test_2=max_cluster/value
+    return max(test_1, test_2)
 
 def CheckOverlap(group_1, group_2):
     x_=min(group_1)
@@ -1895,61 +1904,65 @@ def OrganizePeriods(clusters):
             periods.append(numpy.mean(c.value_list))
             counts.append(len(c.value_list))
     return zip(periods, percent_ident, counts)
-def HierarchicalCluster(lengths, threshold):
-    """This takes a list of lengths and clusters them as follows:
-        For each adjacent pair, it computes the  """
-
-    #Sort the lengths and sequences by length in ascending order
-    sort_ind=numpy.argsort(lengths)
-    lengths=numpy.array( lengths) [sort_ind].astype(float)
-
-    distances=abs(numpy.diff(lengths))
-    midpoints=(lengths[1:]+lengths[:-1])/2
-    score=distances/(2*midpoints)
-##    print score*100
-    clusters=[[lengths[0]]]
-
-    for i,s in enumerate(lengths):
-##        score=s/ min(clusters[-1])
-        score=ScoreFunction(s, clusters[-1])
-        if score<1+threshold: clusters[-1].append(lengths[ i])
-        else:clusters.append([lengths[ i]])
-
-    return clusters
 
 class ModePath():
-    def __init__(self, mode, count, perc_id):
-        self.value_list=[mode]
-        self.count_list=[count]
-        self.perc_id_list=[perc_id]
-    def addmode(self, mode, count, perc_id):
-        self.value_list.append(mode)
-        self.count_list.append(count)
-        self.perc_id_list.append(perc_id)
+    def __init__(self, mode, count, perc_id, empty=False):
+        if empty==False:
+            self.value_dict={perc_id:[mode]}
+            self.count_dict={perc_id:[count]}
+        else:
+            self.value_list=[mode]
+            self.count_list=[count]
+            self.perc_id_list=[perc_id]
+    def addmode(self, mode, count, perc_id, empty=False):
+        if empty==False:
+            if self.value_dict.has_key(perc_id)==False:
+                self.value_dict[perc_id]=[]
+                self.count_dict[perc_id]=[]
+            self.value_dict[perc_id].append(mode)
+            self.count_dict[perc_id].append(count)
+        if empty==True:
+            self.value_list.append(mode)
+            self.count_list.append(count)
+            self.perc_id_list.append(perc_id)
+    def finalize(self):
+        self.perc_id_list=sorted(self.value_dict.keys())
+        self.value_list=[]
+        self.count_list=[]
+        for ident in self.perc_id_list:
+            self.value_list.append(numpy.mean(self.value_dict[ident]))
+            self.count_list.append(numpy.sum(self.count_dict[ident]))
     def checkmode(self, mode):
-        min_value=numpy.min(self.value_list).astype(float)
-        return mode/min_value
+        min_values=[min(v) for v in self.value_dict.values()]
+        max_values=[max(v) for v in self.value_dict.values()]
+        counts=sum([sum(v) for v in self.count_dict.values()])
+        min_value=numpy.min(min_values).astype(float)
+        max_value=numpy.max(max_values).astype(float)
+        return max( mode/min_value, max_value/mode), counts
     def checkcount(self, count):
         score=ScoreFunction(count, self.count_list)
 ##        min_value=numpy.min(self.count_list).astype(float)
         return score
-    def clustercounts(self, threshold=.1, min_lifespan=.04):
+    def clustercounts(self, threshold=.15, min_lifespan=.03):
         """Clusters the mode path to identify intervals of percent identity
         where the number of hits is stable."""
         clusters=[]
         for i, count in enumerate( self.count_list):
             if i==0:
-                clusters.append(ModePath(self.value_list[i], self.count_list[i], self.perc_id_list[i]))
+
+                clusters.append(ModePath(self.value_list[i], self.count_list[i], self.perc_id_list[i], empty=True))
+##                clusters[-1].finalize()
                 continue
             score=clusters[-1].checkcount(self.count_list[i])
 ##            print score
             if  (1-threshold<=score) and score<=(1+threshold):
-                clusters[-1].addmode(self.value_list[i], self.count_list[i], self.perc_id_list[i])
+                clusters[-1].addmode(self.value_list[i], self.count_list[i], self.perc_id_list[i], empty=True)
             else:
-                clusters.append(ModePath(self.value_list[i], self.count_list[i], self.perc_id_list[i]))
+                clusters.append(ModePath(self.value_list[i], self.count_list[i], self.perc_id_list[i], empty=True))
         #Remove shortlived modes:
         final_clusters=[]
         for m in clusters:
+##            m.finalize()
             lifespan=numpy.max(m.perc_id_list)-numpy.min(m.perc_id_list)
             if lifespan>=min_lifespan:
                 final_clusters.append(m)
@@ -1960,34 +1973,95 @@ class ModePath():
 
 def ConstructModeTree(sig, min_identity, cluster_threshold=.1):
     mode_list=[]
-
-    for perc_id in numpy.arange(1, min_identity,-.005):
+    terminate=False
+    for perc_id in numpy.arange(.995, min_identity,-.005):
+        print '{0}, '.format(perc_id),
+        #Cluster the distances between hits at the %ident threshold to find
+        #periods
         modes=IdentifyPeriods(sig, perc_id)
-
+        if len(modes)==0: continue
         try:
             modes, counts=zip(*modes)
-        except: continue
+        except:
+            print modes
+            print perc_id
+            print jabber
+            continue
 
         for i, mode in enumerate( modes):
             new_cluster=True
             for m in mode_list:
-                if m.checkmode(mode)<1+cluster_threshold  and m.checkmode(mode)>1-cluster_threshold :
+                score, count= m.checkmode(mode)
+                if count>=5000: terminate=True
+                if score<1+cluster_threshold  and score>1-cluster_threshold :
                     new_cluster=False
                     m.addmode(mode, counts[i], perc_id)
             if new_cluster==True:
                 mode_list.append(ModePath(mode, counts[i], perc_id ))
-
+        if terminate==True: break
+    for m in mode_list:
+        m.finalize()
 ##        mode_list.append(modes)
 ##        print len(modes)
 ##        pyplot.scatter(modes, [perc_id]*len(modes), s=numpy.array( counts )/1.)
-    PlotModeTree(mode_list)
+##    PlotModeTree(mode_list)
     mode_list=ClusterModeTree(mode_list)
-    PlotModeTree(mode_list)
+##    PlotModeTree(mode_list)
     return mode_list
+
+
+def IdentifyPeriods(signal, threshold=.95):
+    hits=numpy.where(signal>=threshold)[0]
+    if len(hits)==0:
+        return []
+    distance=numpy.diff(hits).astype(float)
+    if len( distance)==0:
+        return []
+    clusters=HierarchicalCluster(distance,.1)
+
+    periods=[( numpy.mean(c), len(c)) for c in clusters if len(c)>4]
+
+    return periods
+
+def HierarchicalCluster(lengths, threshold, plot=False):
+    """This takes a list of lengths and clusters them as follows:
+        For each adjacent pair, it computes the  """
+
+    #Sort the lengths and sequences by length in ascending order
+    sort_ind=numpy.argsort(lengths)
+    lengths=numpy.array( lengths) [sort_ind].astype(float)
+
+    distances=abs(numpy.diff(lengths))
+##    if plot==True:
+##        pyplot.plot(lengths)
+##        pyplot.show()
+##        print jabber
+    midpoints=(lengths[1:]+lengths[:-1])/2.
+    score=distances/(2*midpoints)
+##    print score
+##    print score*100
+    clusters=[[lengths[0]]]
+
+    for i,s in enumerate(lengths[1:]):
+##        score=s/ min(clusters[-1])
+        score=ScoreFunction(s, clusters[-1])
+        if score<=(1.+threshold): clusters[-1].append(lengths[ i])
+        else:
+##            print score
+            clusters.append([lengths[ i]])
+    if plot==True:
+        for c in clusters:
+            pyplot.plot(c)
+        pyplot.show()
+##        print jabber
+
+    return clusters
+
 
 def ClusterModeTree(modetree):
     newtree=[]
     for modepath in modetree:
+##        modepath.finalize()
         newtree+=modepath.clustercounts()
     return newtree
 
@@ -1995,7 +2069,7 @@ def PlotModeTree(modetree):
     colors=matplotlib.colors.cnames.keys()
     numpy.random.shuffle(colors)
     for i, branch in enumerate( modetree):
-        pyplot.scatter(branch. value_list, branch.perc_id_list, s=branch.count_list, c=colors[i])
+        pyplot.scatter(branch. value_list, branch.perc_id_list, s=numpy.array( branch.count_list).astype(float), c=colors[i])
     pyplot.show()
 
     for i, branch in enumerate( modetree):
@@ -2021,7 +2095,7 @@ def AnalyzeRead(read):
 
         #Only interested in base periodicities>3
         #Remove repeats of this length from the sequence
-        rpts=ExtractRepeatsOfSize(read, true_period,.5)
+        rpts=ExtractRepeatsOfSize(read, true_period,.6)
         for r,v in rpts:
             ccf=LaggedUngappedAlignment(r, read)
 ##            return ccf
