@@ -539,6 +539,7 @@ def ComputeKmerCompositionEntropy(sequence,k=5):
     #Output average information per kmer
     return information/ (num_kmers)#len(kmer_counts.keys())#@, len(kmer_counts.keys())/num_kmers
 
+
 def CountKMERS(sequence, k=10 ):
     """Decomposes sequence into kmers."""
     kmerSet={}

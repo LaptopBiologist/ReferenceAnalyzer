@@ -213,7 +213,7 @@ def TandemFinder(infile, outdir,muscle_path, threshold):
     MakeDir(repeat_dir)
     MakeDir(image_dir)
     sequences=GetSeq(infile, rename=True)
-    for key in sorted( sequences.keys(), reverse=False):
+    for key in sorted( sequences.keys(), reverse=True):
 ##        if key!='3R': continue
 ##        out_dir='/'.join(outfile.split('/')[:-1])
 ##        out_root='.'.join( outfile.split('/')[-1].split('.')[:-1])
@@ -223,7 +223,7 @@ def TandemFinder(infile, outdir,muscle_path, threshold):
         #Sort intervals by length:
         interval_list=[]
         true_intervals={}
-        for period in interval_dictionary.keys():
+        for period in sorted( interval_dictionary.keys()):
 
             for interval in interval_dictionary[period]:
                 l,r=interval
@@ -1143,12 +1143,12 @@ def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_l
     repeat_list={}
 ##    if periods_list==[]: periods_list=[len(query)]
     possible_periods=ConstructModeTree(identity_signal,.8)
-    if len( possible_periods)>0:
+    if len( possible_periods)>0 and len(query)<300:
         period_list=OrganizePeriods(possible_periods)
         period_list.append((len(query), threshold,3))
     else: period_list=[(len(query), threshold,3)]
     for expected_periodicity,threshold,rpt_counts in period_list:
-        if expected_periodicity>100*len(query): continue
+        if expected_periodicity>50*len(query): continue
         if rpt_counts<3: continue
         expected_periodicity=int(expected_periodicity)
 
@@ -1884,7 +1884,7 @@ def OrganizePeriods(clusters):
     #Within groups sort by decreasing copy number
     sorted_by_CN=[]
     for g in groups:
-        sorted_by_CN.append(sorted(g, key=lambda g:numpy.mean(numpy.array( g.count_list) ), reverse=True))
+        sorted_by_CN.append(sorted(g, key=lambda g:numpy.sum(numpy.array( g.count_list) ), reverse=True))
 
     #Sort groups by decreasing percent identity
     sorted_by_PI=[]
@@ -2107,6 +2107,53 @@ def AnalyzeRead(read):
     return repeats
 
 
+def lempel_ziv_complexity(sequence):
+    """ Manual implementation of the Lempel-Ziv complexity.
+    It is defined as the number of different substrings encountered as the stream is viewed from begining to the end.
+    As an example:
+    >>> s = '1001111011000010'
+    >>> lempel_ziv_complexity(s)  # 1 / 0 / 01 / 1110 / 1100 / 0010
+    6
+    Marking in the different substrings the sequence complexity :math:`\mathrm{Lempel-Ziv}(s) = 6`: :math:`s = 1 / 0 / 01 / 1110 / 1100 / 0010`.
+    - See the page https://en.wikipedia.org/wiki/Lempel-Ziv_complexity for more details.
+    Other examples:
+    >>> lempel_ziv_complexity('1010101010101010')  # 1 / 0 / 10
+    3
+    >>> lempel_ziv_complexity('1001111011000010000010')  # 1 / 0 / 01 / 1110 / 1100 / 0010 / 000 / 010
+    7
+    >>> lempel_ziv_complexity('100111101100001000001010')  # 1 / 0 / 01 / 1110 / 1100 / 0010 / 000 / 010 / 10
+    8
+    - Note: it is faster to give the sequence as a string of characters, like `'10001001'`, instead of a list or a numpy array.
+    - Note: see this notebook for more details, comparison, benchmarks and experiments: https://Nbviewer.Jupyter.org/github/Naereen/Lempel-Ziv_Complexity/Short_study_of_the_Lempel-Ziv_complexity.ipynb
+    - Note: there is also a Cython-powered version, for speedup, see :download:`lempel_ziv_complexity_cython.pyx`.
+    """
+    binary_sequence=''.join(SeqToExanded(sequence).astype(int).astype('|S1'))
+    u, v, w = 0, 1, 1
+    v_max = 1
+    length = len(binary_sequence)
+    complexity = 1
+    while True:
+        if binary_sequence[u + v - 1] == binary_sequence[w + v - 1]:
+            v += 1
+            if w + v >= length:
+                complexity += 1
+                break
+        else:
+            if v > v_max:
+                v_max = v
+            u += 1
+            if u == w:
+                complexity += 1
+                w += v_max
+                if w > length:
+                    break
+                else:
+                    u = 0
+                    v = 1
+                    v_max = 1
+            else:
+                v = 1
+    return complexity
 
 def main(argv):
     print argv
