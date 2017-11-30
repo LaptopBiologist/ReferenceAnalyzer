@@ -35,7 +35,7 @@ import csv
 import os
 import collections
 ##import ReferenceAnalyzer.FindHomology
-
+from FindHomology import ComputeKmerCompositionEntropy
 
 import gzip
 
@@ -206,6 +206,8 @@ def TandemFinder(infile, outdir,muscle_path, threshold):
     out_annotation='{0}/genome_annotation.tsv'.format(outdir)
     annotation_handle=open(out_annotation, 'w')
     annotation_table=csv.writer(annotation_handle, delimiter='\t')
+    header=['Chrom', 'Repeat Length', 'Copy number', 'Shannon information', 'Diversity', 'Complexity', 'Start', 'End','Per nucleotide information', 'Sequence']
+    annotation_table.writerow(header)
     log_file='{0}/errlog.txt'.format(outdir)
 
     repeat_dir='{0}/repeats'.format(outdir)
@@ -289,13 +291,15 @@ def TandemFinder(infile, outdir,muscle_path, threshold):
             #Write consensus
                 for cons_name in cons_dict.keys():
                     chrom, period, left_boundary, right_boundary= fasta_name.split('/')[-1].split('_')
-                    cons_num, cons_len, cons_count, left_boundary, right_boundary=cons_name.split('_')
+                    cons_num, cons_len, cons_count, left_boundary, right_boundary, mean_info, seq_div, complexity=cons_name.split('_')
+                    if int(cons_count)==1: continue
+                    seq, info= cons_dict[cons_name]
 ##                    true_intervals[major_period].append((left_boundary, right_boundary))
                     seq_name='{0}_{1}_{2}_{3}_{4}'.format(chrom,cons_len, cons_count,  left_boundary, right_boundary )
                     fasta_handle.write('>{0}\n'.format(seq_name))
-                    fasta_handle.write('{0}\n'.format( cons_dict[cons_name]))
+                    fasta_handle.write('{0}\n'.format(seq))
 
-                    row=[key, cons_len, cons_count,  left_boundary, right_boundary, cons_dict[cons_name]]
+                    row=[key, cons_len, cons_count, mean_info, seq_div, complexity,  left_boundary, right_boundary, info, seq]
                     annotation_table.writerow(row)
         PlotTandems(true_intervals)
         image_file='{0}/{1}.png'.format(image_dir, key)
@@ -1434,7 +1438,7 @@ def BlastSequences(query,subject,outfile,blastdir, word_size, logfile):
 def ClusterMSA(sequences, threshold=.8,):
     clusters=[]
 ##    print len(sequences)
-
+    copy_seq=copy.copy(sequences)
     terminate=False
     count=0
     count_list=[]
@@ -1450,11 +1454,11 @@ def ClusterMSA(sequences, threshold=.8,):
         for s in range(1,len(sequences)):
             #Find the best alignment betwen the sequecnes using a heuristic
             perc_id=ComputeMSADistance(sequences[ s].seq, clusters[-1][0].seq)
-
+##            print perc_id
             #Check whether the percent identity of the match exceeds a threshold
             if perc_id>=threshold:
-                    clusters[-1].append(sequences[s])
-                    cluster_ind.append(s)
+                clusters[-1].append(sequences[s])
+                cluster_ind.append(s)
 
         #Remove clusters from sequence
 ##        print count_list[-1],
@@ -1472,6 +1476,8 @@ def ComputeMSADistance(seq1, seq2):
 
 def GetConsensusFromFasta(infile):
     seq=GetSeq(infile)
+
+
     consensus_dict={}
     if len(seq.keys())==0:
         return consensus_dict
@@ -1485,6 +1491,8 @@ def GetConsensusFromFasta(infile):
     seq_dict=[]
     for key in seq.keys():
         seq_dict.append( FastaSeq(key, seq[key]))
+
+
     clusters=ClusterMSA(seq_dict)
 
 
@@ -1492,12 +1500,16 @@ def GetConsensusFromFasta(infile):
         left_edges=[c.left for c in cluster]
         right_edges=[c.right for c in cluster]
         lengths=[c.length for c in cluster]
-        sequences=[c.seq for s in cluster]
-        consensus=GetConsensusFromSequences(sequences)
+        sequences=[s.seq for s in cluster]
 
-        name='{0}_{1}_{2}_{3}_{4}'.format(i,len(consensus), len(cluster), min(left_edges), max(right_edges) )
-        consensus_dict[name]=consensus
+        consensus, information, diversity=GetConsensusFromSequences(sequences)
+        mean_information=numpy.nanmean(information)
+        information_string=ConvertFloatToAscii(information, 0, 2)
+        complexity=ComputeKmerCompositionEntropy(consensus)
+        name='{0}_{1}_{2}_{3}_{4}_{5}_{6}_{7}'.format(i,len(consensus), len(cluster), min(left_edges), max(right_edges), mean_information, diversity, complexity )
+        consensus_dict[name]=(consensus,information_string)
     return consensus_dict
+
 
 def GetConsensusFromSequences(seq):
     cons_array=numpy.ndarray((5, len(seq[0])))
@@ -1505,14 +1517,66 @@ def GetConsensusFromSequences(seq):
     nt_dict={'-':0, 'A':1, 'C':2,'T':3, 'G':4}
     NT_array=numpy.array(['-', 'A', 'C', 'T', 'G'])
     for s in seq:
+
         seq_array=numpy.fromstring(s, '|S1')
         for i,v in enumerate(NT_array):
             ind=seq_array==v
+
             cons_array[i,ind]+=1.
+
     cons_seq=NT_array[numpy.argmax(cons_array,0)]
-    return ''.join(cons_seq[cons_seq!='-'])
+    information=SequenceInformation(cons_array)
+    div=SequenceDiversity(cons_array)
+
+    return ''.join(cons_seq[cons_seq!='-']), information, div
+
+def ConvertFloatToAscii(x,float_lower, float_upper, ascii_lower=33., ascii_upper=126.):
+    conversion_factor=(ascii_upper-ascii_lower)/(float_upper-float_lower)
+    ascii_number=numpy.round( (x-float_lower)*conversion_factor+ascii_lower).astype(int)
+    char_string=''.join([chr(i) for i in ascii_number ])
+    return char_string
+
+def ConvertAsciiToFloat(char_string,float_lower, float_upper, ascii_lower=33., ascii_upper=126.):
+    F=numpy.array( [float( ord(c)) for c in char_string])
+    conversion_factor=(float_upper-float_lower)/(ascii_upper-ascii_lower)
+    ascii_number=(F-ascii_lower)*conversion_factor+float_lower
+
+    return ascii_number
+
+def SequenceInformation(cons_array):
+    norm_const=cons_array[0:,:].sum(0)
+
+    #Identify where indels
+    gap_ind=numpy.argmax(cons_array,0)==0
+    f_ai=(cons_array[1:,:]/norm_const)[:,~gap_ind]
 
 
+    H=-1*( f_ai*numpy.log2(f_ai))
+##    H[numpy.where(f_ai==0)]=0
+
+    H_i=numpy.nansum(H,0)
+    e_n_i=(1/numpy.log(2))*(3/(2*norm_const[~gap_ind]))
+##    e_n=0
+##    print e_n
+
+    R_i=2-(H_i+e_n_i)
+    R_i[R_i<0]=0.
+    R_i[R_i>2]=2.
+
+    return R_i
+
+def SequenceDiversity(cons_array):
+##    print cons_array
+    norm_const=cons_array[1:,:].sum(0)
+    #Identify where indels
+    gap_ind=numpy.argmax(cons_array,0)==0
+    N_a=(cons_array[1:,:][:,~gap_ind])
+    N_k=norm_const[~gap_ind]
+##    print (N_a*(N_a-1))/(N_k*(N_k-1))
+
+    SD=numpy.nansum ((N_a*(N_a-1))/(N_k*(N_k-1)) )/float(len(N_k))
+##    print SD
+    return SD
 def ConsensusFromClustal(alignment):
     nt_list=[]
     for col in range( alignment.get_alignment_length()):
@@ -2107,53 +2171,6 @@ def AnalyzeRead(read):
     return repeats
 
 
-def lempel_ziv_complexity(sequence):
-    """ Manual implementation of the Lempel-Ziv complexity.
-    It is defined as the number of different substrings encountered as the stream is viewed from begining to the end.
-    As an example:
-    >>> s = '1001111011000010'
-    >>> lempel_ziv_complexity(s)  # 1 / 0 / 01 / 1110 / 1100 / 0010
-    6
-    Marking in the different substrings the sequence complexity :math:`\mathrm{Lempel-Ziv}(s) = 6`: :math:`s = 1 / 0 / 01 / 1110 / 1100 / 0010`.
-    - See the page https://en.wikipedia.org/wiki/Lempel-Ziv_complexity for more details.
-    Other examples:
-    >>> lempel_ziv_complexity('1010101010101010')  # 1 / 0 / 10
-    3
-    >>> lempel_ziv_complexity('1001111011000010000010')  # 1 / 0 / 01 / 1110 / 1100 / 0010 / 000 / 010
-    7
-    >>> lempel_ziv_complexity('100111101100001000001010')  # 1 / 0 / 01 / 1110 / 1100 / 0010 / 000 / 010 / 10
-    8
-    - Note: it is faster to give the sequence as a string of characters, like `'10001001'`, instead of a list or a numpy array.
-    - Note: see this notebook for more details, comparison, benchmarks and experiments: https://Nbviewer.Jupyter.org/github/Naereen/Lempel-Ziv_Complexity/Short_study_of_the_Lempel-Ziv_complexity.ipynb
-    - Note: there is also a Cython-powered version, for speedup, see :download:`lempel_ziv_complexity_cython.pyx`.
-    """
-    binary_sequence=''.join(SeqToExanded(sequence).astype(int).astype('|S1'))
-    u, v, w = 0, 1, 1
-    v_max = 1
-    length = len(binary_sequence)
-    complexity = 1
-    while True:
-        if binary_sequence[u + v - 1] == binary_sequence[w + v - 1]:
-            v += 1
-            if w + v >= length:
-                complexity += 1
-                break
-        else:
-            if v > v_max:
-                v_max = v
-            u += 1
-            if u == w:
-                complexity += 1
-                w += v_max
-                if w > length:
-                    break
-                else:
-                    u = 0
-                    v = 1
-                    v_max = 1
-            else:
-                v = 1
-    return complexity
 
 def main(argv):
     print argv
