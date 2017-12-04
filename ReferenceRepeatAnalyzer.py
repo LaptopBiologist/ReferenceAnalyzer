@@ -15,7 +15,7 @@ from Bio import Seq
 from Bio.Blast import NCBIXML
 
 import matplotlib
-##matplotlib.use('Agg')
+matplotlib.use('Agg')
 from matplotlib import pyplot
 from statsmodels.tsa import stattools
 from statsmodels.tsa.stattools import acf
@@ -223,7 +223,7 @@ def TandemFinder(infile, outdir,muscle_path,blast_path, threshold):
     image_dir='{0}/images'.format(outdir)
     MakeDir(repeat_dir)
     MakeDir(image_dir)
-    sequences=GetSeq(infile, rename=True)
+    sequences=GetSeq(infile, rename=False)
     for key in sorted( sequences.keys(), reverse=True):
 ##        if key!='3R': continue
 ##        out_dir='/'.join(outfile.split('/')[:-1])
@@ -1512,7 +1512,7 @@ def GetConsensusFromFasta(infile):
         consensus, information, diversity=GetConsensusFromSequences(sequences)
         mean_information=numpy.nanmean(information)
         information_string=ConvertFloatToAscii(information, 0, 2)
-        complexity=ComputeKmerCompositionEntropy(consensus)
+        complexity=SeqManipulations.ComputeNeighborDistance(consensus, unbiased=True)
         name='{0}_{1}_{2}_{3}_{4}_{5}_{6}_{7}'.format(i,len(consensus), len(cluster), min(left_edges), max(right_edges), mean_information, diversity, complexity )
         consensus_dict[name]=(consensus,information_string)
     return consensus_dict
@@ -2065,7 +2065,7 @@ def ConstructModeTree(sig, min_identity, cluster_threshold=.1, plot=False ):
     mode_list=[]
     terminate=False
     for perc_id in numpy.arange(.995, min_identity,-.005):
-        print '{0}, '.format(perc_id),
+##        print '{0}, '.format(perc_id),
         #Cluster the distances between hits at the %ident threshold to find
         #periods
         modes=IdentifyPeriods(sig, perc_id)
