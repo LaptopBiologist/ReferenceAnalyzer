@@ -47,7 +47,14 @@ import copy
 pyplot.interactive(False)
 #Global
 MUSCLE_PATH=None
-BLAST_PATH='c:/ncbi/blast-2.5.0+/bin/blastn.exe'
+BLAST_PATH='c:/ncbi/blast-2.5.0+'
+def SetMUSCLEPath(path):
+    global MUSCLE_PATH
+    MUSCLE_PATH= path
+def SetBLASTPath(path):
+    global BLAST_PATH
+    BLAST_PATH="{0}/{1}".format(path, 'bin/blastn.exe')
+
 import matplotlib
 seaborn.set_style('white')
 
@@ -199,8 +206,9 @@ def CleanName(name):
         name='_'.join(name.split(i))
     return(name)
 
-def TandemFinder(infile, outdir,muscle_path, threshold):
+def TandemFinder(infile, outdir,muscle_path,blast_path, threshold):
     SetMUSCLEPath(muscle_path)
+    SetBLASTPath(blast_path)
     MakeDir(outdir)
     out_fasta='{0}/consensus_repeats.fa'.format(outdir)
     fasta_handle=open(out_fasta, 'w')
@@ -1287,10 +1295,8 @@ def LaggedUngappedAlignment(query, target):
                 percent_id=numpy.hstack((percent_id,LaggedUngappedAlignment(query, sliced_seq)[1:] ))
         return percent_id
 
-def SetMUSCLEPath(path):
-    global MUSCLE_PATH
-    MUSCLE_PATH= path
 
+    MUSCLE_PATH= path
 def RunMuscle(infile, outfile, maxiters, logfile):
     command=[MUSCLE_PATH, '-in', str( infile), '-out',str( outfile), '-maxiters', str(maxiters), '-diags']
     errhandle=open(logfile, 'a')
@@ -2202,7 +2208,10 @@ def main(argv):
         param[argv[i]]= argv[i+1]
     print param
     if param=={}: return
-    TandemFinder(param['-i'], param['-o'], param['-m'] ,.8)
+    if param.has_key('--cutoff')==True:
+        cutoff=float(param['--cutoff'])
+    else: cutoff=.8
+    TandemFinder(param['-i'], param['-o'], param['-m'], param['-b'], cutoff )
 
 if __name__ == '__main__':
     main(sys.argv)
