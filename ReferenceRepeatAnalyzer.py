@@ -49,6 +49,7 @@ pyplot.interactive(False)
 MUSCLE_PATH=None
 BLAST_PATH='c:/ncbi/blast-2.5.0+/bin/blastn.exe'
 import matplotlib
+seaborn.set_style('white')
 
 class ReferenceRepeat():
     def __init__(self, sequence, left, right, tandem_flag):
@@ -1591,6 +1592,17 @@ def ConsensusFromClustal(alignment):
     nt_list= numpy.array(nt_list)
     return ''.join(nt_list[nt_list!='-'])
 
+def ACF_summary(seq, cutoff=.4):
+    acf=LaggedUngappedAlignment( seq,seq*2)[1:-1]
+    pyplot.plot(acf)
+    pyplot.show()
+    hits=(acf>=cutoff)
+    print hits.sum()
+    print acf[hits].sum()
+    print numpy.mean(acf[hits])
+    print numpy.mean(acf[hits])*hits.sum()
+    print numpy.median( numpy.diff(numpy.where(acf>cutoff)))
+
 def Autocorrel(seq, max_size, complex_num=True,unbiased=False,  p=False):
 ##    seq_array=numpy.fromstring(seq.upper(), '|S1')
     if complex_num==True:
@@ -2033,9 +2045,17 @@ class ModePath():
 
         return final_clusters
 
+def PlotDistances(ccf, min_identity=.8):
+    for perc_id in numpy.arange(.995, min_identity,-.005):
+        hits=numpy.where(ccf>=perc_id)[0]
+        distances=numpy.diff(hits)
+        pyplot.scatter(distances, [perc_id]*len(distances), alpha=.1, s=10,c='black')
+    pyplot.ylabel('Percent identity')
+    pyplot.xlabel('Periodicity')
+    pyplot.tick_params(length=4, direction='in')
+    pyplot.show()
 
-
-def ConstructModeTree(sig, min_identity, cluster_threshold=.1):
+def ConstructModeTree(sig, min_identity, cluster_threshold=.1, plot=False ):
     mode_list=[]
     terminate=False
     for perc_id in numpy.arange(.995, min_identity,-.005):
@@ -2068,9 +2088,9 @@ def ConstructModeTree(sig, min_identity, cluster_threshold=.1):
 ##        mode_list.append(modes)
 ##        print len(modes)
 ##        pyplot.scatter(modes, [perc_id]*len(modes), s=numpy.array( counts )/1.)
-##    PlotModeTree(mode_list)
+    if plot==True: PlotModeTree(mode_list)
     mode_list=ClusterModeTree(mode_list)
-##    PlotModeTree(mode_list)
+    if plot==True: PlotModeTree(mode_list)
     return mode_list
 
 
@@ -2134,6 +2154,9 @@ def PlotModeTree(modetree):
     numpy.random.shuffle(colors)
     for i, branch in enumerate( modetree):
         pyplot.scatter(branch. value_list, branch.perc_id_list, s=numpy.array( branch.count_list).astype(float), c=colors[i])
+    pyplot.ylabel('Percent Identity', size=10)
+    pyplot.xlabel('Periodicity', size=10)
+    pyplot.tick_params(length=4, direction='in')
     pyplot.show()
 
     for i, branch in enumerate( modetree):
