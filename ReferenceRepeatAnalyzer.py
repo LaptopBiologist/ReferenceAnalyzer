@@ -46,14 +46,14 @@ import copy
 
 pyplot.interactive(False)
 #Global
-MUSCLE_PATH=None
-BLAST_PATH='c:/ncbi/blast-2.5.0+'
+MUSCLE_PATH="/home/mpm289/muscle3.8.31_i86linux64"
+BLAST_PATH="/home/mpm289/ncbi-blast-2.7.1+/bin/blastn"#'c:/ncbi/blast-2.5.0+'
 def SetMUSCLEPath(path):
     global MUSCLE_PATH
     MUSCLE_PATH= path
 def SetBLASTPath(path):
     global BLAST_PATH
-    BLAST_PATH="{0}/{1}".format(path, 'bin/blastn.exe')
+    BLAST_PATH="{0}/{1}".format(path, 'bin/blastn')
 
 import matplotlib
 seaborn.set_style('white')
@@ -193,11 +193,15 @@ def GetSeq(ref, upper=False, rename=False, clean=True):
             SeqLen[CleanName(name)]=str( rec.seq)
         else:
             if clean==True:
-                SeqLen[CleanName(rec.name)]=str( rec.seq)
+                cleaned_name=CleanName(rec.name)
+                cleaned_name='-'.join(cleaned_name.split('_'))
+                SeqLen[cleaned_name]=str( rec.seq)
+
             else:
                 SeqLen[rec.name]=str( rec.seq)
         if upper==True: SeqLen[CleanName(rec.name)]=SeqLen[CleanName(rec.name)].upper()
     handle.close()
+
     return SeqLen
 
 def CleanName(name):
@@ -207,8 +211,12 @@ def CleanName(name):
     return(name)
 
 def TandemFinder(infile, outdir,muscle_path,blast_path, threshold):
-    SetMUSCLEPath(muscle_path)
-    SetBLASTPath(blast_path)
+##    print MUSCLE_PATH
+##    print BLAST_PATH
+##    SetMUSCLEPath(muscle_path)
+##    SetBLASTPath(blast_path)
+    print BLAST_PATH
+    print MUSCLE_PATH
     MakeDir(outdir)
     out_fasta='{0}/consensus_repeats.fa'.format(outdir)
     fasta_handle=open(out_fasta, 'w')
@@ -223,14 +231,14 @@ def TandemFinder(infile, outdir,muscle_path,blast_path, threshold):
     image_dir='{0}/images'.format(outdir)
     MakeDir(repeat_dir)
     MakeDir(image_dir)
-    sequences=GetSeq(infile, rename=False)
+    sequences=GetSeq(infile,upper=True, rename=False)
     for key in sorted( sequences.keys(), reverse=True):
 ##        if key!='3R': continue
 ##        out_dir='/'.join(outfile.split('/')[:-1])
 ##        out_root='.'.join( outfile.split('/')[-1].split('.')[:-1])
 ##        outimage='{0}/{1}_{2}.png'.format(out_dir, out_root, CleanName( key))
-        masked_seq=sequences[key]
-        interval_dictionary= FindPeriodicity(sequences[key], '', key)
+        masked_seq=sequences[key].upper()
+        interval_dictionary= FindPeriodicity(sequences[key].upper(), '', key)
         #Sort intervals by length:
         interval_list=[]
         true_intervals={}
@@ -1155,15 +1163,17 @@ def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_l
 ##    periods_list=FindAdditionalPeriods(identity_signal, distances, len(query), threshold)
     repeat_list={}
 ##    if periods_list==[]: periods_list=[len(query)]
-    possible_periods=ConstructModeTree(identity_signal,.8)
+    possible_periods=ConstructModeTree(identity_signal,.8, plot=False)
     if len( possible_periods)>0 and len(query)<300:
         period_list=OrganizePeriods(possible_periods)
         period_list.append((len(query), threshold,3))
     else: period_list=[(len(query), threshold,3)]
+    print period_list
     for expected_periodicity,threshold,rpt_counts in period_list:
-        if expected_periodicity>50*len(query): continue
+        if expected_periodicity>(100*len(query)): continue
         if rpt_counts<3: continue
         expected_periodicity=int(expected_periodicity)
+        print expected_periodicity
 
         #This counts the number of consecutive repeats
         consecutive_repeats=0
@@ -1225,18 +1235,23 @@ def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_l
 ##                identity_signal[hits[index]]=0
 ##    pyplot.plot(identity_signal)
 ##    pyplot.show()
-    if len(repeat_list.keys())>0:
-        period_keys=HierarchicalCluster(repeat_list.keys(),.1)
+##    for key in repeat_list.keys():
+##        print '\t\t', key, len(repeat_list[key])
+##    if len(repeat_list.keys())>0:
+##        period_keys=HierarchicalCluster(repeat_list.keys(),.1)
+##
+##    else: return {}, seq_array, expected_periodicity
 
-    else: return {}, seq_array, expected_periodicity
 
-
-    repeat_dict={}
-    for key_list in period_keys:
-        mean_key=int(numpy.mean(key_list))
-        repeat_dict[mean_key]=[]
-        for key in key_list:
-            repeat_dict[mean_key]+=repeat_list[key]
+##    repeat_dict={}
+    repeat_dict=repeat_list
+##    for key_list in period_keys:
+##        mean_key=int(numpy.mean(key_list))
+##        repeat_dict[mean_key]=[]
+##        for key in key_list:
+##            repeat_dict[mean_key]+=repeat_list[key]
+##    for key in repeat_dict.keys():
+##        print '\t\t', key, len(repeat_dict[key])
     masked_sequence=''.join(seq_array)
     return repeat_dict, seq_array, expected_periodicity
 
@@ -1296,7 +1311,7 @@ def LaggedUngappedAlignment(query, target):
         return percent_id
 
 
-    MUSCLE_PATH= path
+##    MUSCLE_PATH= path
 def RunMuscle(infile, outfile, maxiters, logfile):
     command=[MUSCLE_PATH, '-in', str( infile), '-out',str( outfile), '-maxiters', str(maxiters), '-diags']
     errhandle=open(logfile, 'a')
@@ -1438,6 +1453,7 @@ def AlignWithBLAST(infile, outfile,log_file, word_size=11, blastdir=BLAST_PATH):
 
 def BlastSequences(query,subject,outfile,blastdir, word_size, logfile):
     errhandle=open(logfile, 'a')
+    print blastdir
     p=subprocess.Popen([blastdir, '-query', query,'-subject', subject,'-out', outfile, '-outfmt', '5', '-max_hsps', '1', '-word_size', str(word_size) ],stderr=errhandle)
     p.communicate()
     errhandle.close()
@@ -1512,7 +1528,10 @@ def GetConsensusFromFasta(infile):
         consensus, information, diversity=GetConsensusFromSequences(sequences)
         mean_information=numpy.nanmean(information)
         information_string=ConvertFloatToAscii(information, 0, 2)
-        complexity=SeqManipulations.ComputeNeighborDistance(consensus, unbiased=True)
+        try:
+            complexity=SeqManipulations.ComputeNeighborDistance(consensus, unbiased=True)
+        except:
+            complexity='err'
         name='{0}_{1}_{2}_{3}_{4}_{5}_{6}_{7}'.format(i,len(consensus), len(cluster), min(left_edges), max(right_edges), mean_information, diversity, complexity )
         consensus_dict[name]=(consensus,information_string)
     return consensus_dict
@@ -2064,7 +2083,7 @@ def PlotDistances(ccf, min_identity=.8):
 def ConstructModeTree(sig, min_identity, cluster_threshold=.1, plot=False ):
     mode_list=[]
     terminate=False
-    for perc_id in numpy.arange(.995, min_identity,-.005):
+    for perc_id in numpy.arange(1.005, min_identity-.005,-.005):
 ##        print '{0}, '.format(perc_id),
         #Cluster the distances between hits at the %ident threshold to find
         #periods
@@ -2211,6 +2230,9 @@ def main(argv):
     if param.has_key('--cutoff')==True:
         cutoff=float(param['--cutoff'])
     else: cutoff=.8
+##    SetBLASTPath(param['-b'])
+##    SetMUSCLEPath(param['-m'])
+
     TandemFinder(param['-i'], param['-o'], param['-m'], param['-b'], cutoff )
 
 if __name__ == '__main__':
