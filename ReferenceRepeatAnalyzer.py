@@ -176,7 +176,7 @@ def GetKMERS(sequence, k=10 ):
 
 
 
-def GetSeq(ref, upper=False, rename=False, clean=True):
+def GetSeq(ref, upper=False, rename=False, clean=True, remove_underscores=False):
 
     """Reads a fasta, returns of a dictionary of strings keyed by entry name."""
     if ref.split('.')[-1]=='gz':
@@ -194,14 +194,17 @@ def GetSeq(ref, upper=False, rename=False, clean=True):
         else:
             if clean==True:
                 cleaned_name=CleanName(rec.name)
-                cleaned_name='-'.join(cleaned_name.split('_'))
+                if remove_underscores==True:
+                    cleaned_name='-'.join(cleaned_name.split('_'))
                 SeqLen[cleaned_name]=str( rec.seq)
 
             else:
                 SeqLen[rec.name]=str( rec.seq)
-        if upper==True: SeqLen[CleanName(rec.name)]=SeqLen[CleanName(rec.name)].upper()
-    handle.close()
 
+    handle.close()
+    if upper==True:
+        for key in SeqLen.keys():
+            SeqLen[key]=SeqLen[key].upper()
     return SeqLen
 
 def CleanName(name):
@@ -231,7 +234,7 @@ def TandemFinder(infile, outdir,muscle_path,blast_path, threshold):
     image_dir='{0}/images'.format(outdir)
     MakeDir(repeat_dir)
     MakeDir(image_dir)
-    sequences=GetSeq(infile,upper=True, rename=False)
+    sequences=GetSeq(infile,upper=True, rename=False, clean=True, remove_underscores=True)
     for key in sorted( sequences.keys(), reverse=True):
 ##        if key!='3R': continue
 ##        out_dir='/'.join(outfile.split('/')[:-1])
