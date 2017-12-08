@@ -14,7 +14,7 @@ This script is primarily for identifying redundancies in a set of consensus sequ
 
 Usage:
 
-python FindHomology.py -i <path to input fasta> -o <output directory to be created> -B <path to the BLAST directory> -C <percent identity cutoff>
+python FindHomology.py -i \<path to input fasta\> -o \<output directory to be created\> -B \<path to the BLAST directory\> -C \<percent identity cutoff\>
   
 For example:
 
