@@ -225,7 +225,11 @@ def TandemFinder(infile, outdir,muscle_path,blast_path, threshold):
     fasta_handle=open(out_fasta, 'w')
     out_annotation='{0}/genome_annotation.tsv'.format(outdir)
     annotation_handle=open(out_annotation, 'w')
+    annotation_handle=open(out_annotation, 'w')
     annotation_table=csv.writer(annotation_handle, delimiter='\t')
+    reference_name=infile.split('/')[-1].split('.')[0]
+    masked_reference='{0}/{1}_masked_{2}.fa.gz'.format(outdir, reference_name,int( threshold*100))
+    masked_handle=gzip.open(masked_reference, 'w')
     header=['Chrom', 'Repeat Length', 'Copy number', 'Shannon information', 'Diversity', 'Complexity', 'Start', 'End','Per nucleotide information', 'Sequence']
     annotation_table.writerow(header)
     log_file='{0}/errlog.txt'.format(outdir)
@@ -328,8 +332,12 @@ def TandemFinder(infile, outdir,muscle_path,blast_path, threshold):
 ##        image_file='{0}/{1}_log.png'.format(image_dir, key)
 ##        pyplot.savefig(image_file)
         pyplot.close()
+        masked_handle.write('>{0}\n'.format(key))
+        masked_handle.write('{0}\n'.format(masked_seq))
+
     annotation_handle.close()
     fasta_handle.close()
+    masked_handle.close()
 ##        print key
 def ExtractTandems(infile, outfile):
     sequences=GetSeq(infile, upper=True)#, rename=True)
