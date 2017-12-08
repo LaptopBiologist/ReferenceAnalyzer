@@ -8,15 +8,9 @@ FindHomology.py is primarily for identifying redundancies in a set of consensus 
 
 Dependencies
 
-Numpy
-Scipy
-Statsmodels
-Scikit-Learn
-Networkx
-HTSeq 0.6.1
-Python-Louvain
-Biopython
-Matplotlib
-Seaborn
+Statistics and scientific computing: Numpy, Scipy, Statsmodels, Scikit-Learn
+Graph manipulations: Networkx, Python-Louvain
+Bioinformatics: Biopython,  HTSeq 0.6.1
+Plotting: Matplotlib, Seaborn
 
 Most of these dependencies are included with the common Python bundles (eg Enthought Canopy). If you don't already have them installed, most are easy to install with pip.  The exceptions are HTSeq and Python-Louvain. On Windows the current version of HTSeq (0.9.1) is difficult to install, but version 0.6.1 can be installed with an executable found at https://pypi.python.org/pypi/HTSeq/0.6.1. Python-Louvain cannot be installed with pip. For simple installation instructions, see: https://pypi.python.org/pypi/python-louvain/0.3
