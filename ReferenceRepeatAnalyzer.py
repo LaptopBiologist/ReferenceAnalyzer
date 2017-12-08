@@ -15,7 +15,7 @@ from Bio import Seq
 from Bio.Blast import NCBIXML
 
 import matplotlib
-matplotlib.use('Agg')
+##matplotlib.use('Agg')
 from matplotlib import pyplot
 from statsmodels.tsa import stattools
 from statsmodels.tsa.stattools import acf
@@ -812,33 +812,6 @@ def QuickMatch(seq1, seq2, seeds=100):
 
 
 
-
-def BoothsAlgorithm(s):
-    #Booth's algoritm for finding the lexicographical minimum string rotation
-    #From Wiki
-    S = s*2      # Concatenate string to it self to avoid modular arithmetic
-    f = [-1] * len(S)     # Failure function
-    k = 0       # Least rotation of string found so far
-    for j in xrange(1,len(S)):
-        sj = S[j]
-        i = f[j-k-1]
-        while i != -1 and sj != S[k+i+1]:
-            if sj < S[k+i+1]:
-                k = j-i-1
-            i = f[i]
-        if sj != S[k+i+1]: # if sj != S[k+i+1], then i == -1
-            if sj < S[k]: # k+i+1 = k
-                k = j
-            f[j-k] = -1
-        else:
-            f[j-k] = i+1
-    length=len(s)
-
-    return s[k-length:]+s[:k]
-
-
-
-    return period_list, window_list, corr_list, mode_list
 
 def PowerLaw(x,a,k,b):
     return a* numpy.exp(-k*x)+b
