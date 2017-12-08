@@ -1,5 +1,7 @@
 # ReferenceAnalyzer
 
+!!!! STILL IN DEVELOPMENT !!!!
+
 This is a collection of Python functions for building and curating a set of repeat consensus sequences. 
 
 ReferenceRepeatAnalyzer.py uses time-domain analysis to identify tandem repeats in a reference genome and generate consensus sequences. It includes function for computing autocorrelation and cross-correlation functions on DNA sequences, which are equivalent to ungapped sequence alignments.
