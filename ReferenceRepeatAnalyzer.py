@@ -230,7 +230,7 @@ def TandemFinder(infile, outdir,muscle_path,blast_path, threshold):
     reference_name=infile.split('/')[-1].split('.')[0]
     masked_reference='{0}/{1}_masked_{2}.fa.gz'.format(outdir, reference_name,int( threshold*100))
     masked_handle=gzip.open(masked_reference, 'w')
-    header=['Chrom', 'Repeat Length', 'Copy number', 'Shannon information', 'Diversity', 'Complexity', 'Start', 'End','Per nucleotide information', 'Sequence']
+    header=['Chrom', 'Repeat Length', 'Copy number', 'Shannon information', 'Diversity', 'Complexity', 'Start', 'End','Starts','Ends', 'Per nucleotide information', 'Sequence']
     annotation_table.writerow(header)
     log_file='{0}/errlog.txt'.format(outdir)
 
@@ -317,13 +317,13 @@ def TandemFinder(infile, outdir,muscle_path,blast_path, threshold):
                     chrom, period, left_boundary, right_boundary= fasta_name.split('/')[-1].split('_')
                     cons_num, cons_len, cons_count, left_boundary, right_boundary, mean_info, seq_div, complexity=cons_name.split('_')
                     if int(cons_count)==1: continue
-                    seq, info= cons_dict[cons_name]
+                    seq, info, starts, ends= cons_dict[cons_name]
 ##                    true_intervals[major_period].append((left_boundary, right_boundary))
                     seq_name='{0}_{1}_{2}_{3}_{4}'.format(chrom,cons_len, cons_count,  left_boundary, right_boundary )
                     fasta_handle.write('>{0}\n'.format(seq_name))
                     fasta_handle.write('{0}\n'.format(seq))
 
-                    row=[key, cons_len, cons_count, mean_info, seq_div, complexity,  left_boundary, right_boundary, info, seq]
+                    row=[key, cons_len, cons_count, mean_info, seq_div, complexity,  left_boundary, right_boundary,starts, ends, info, seq]
                     annotation_table.writerow(row)
         PlotTandems(true_intervals)
         image_file='{0}/{1}.png'.format(image_dir, key)
@@ -1344,6 +1344,8 @@ def MultipleSequenceAlignment(infile, outfile, maxiters, logfile):
 def WriteFasta(sequences, outfile):
     outhandle=open(outfile, 'w')
     for i,s in  enumerate( sequences ):
+        N_prop=float(s.count('N'))/len(s)
+        if N_prop>.05: continue
         outhandle.write('>{0}_{1}_{2}\n'.format(s.chrom, s.left, s.right))
         outhandle.write('{0}\n'.format(s.sequence))
     outhandle.close()
@@ -1357,6 +1359,7 @@ def SummarizeRepeats(sequences, outfile, log_handle):
 
     #Limit this to tandem repeats
     tandem_repeats=[s  for s in sequences if s.tandem_flag]
+
     min_len=min( [abs(s.length) for s in tandem_repeats ])
     if len(tandem_repeats)==0: return {}
 
@@ -1517,7 +1520,7 @@ def GetConsensusFromFasta(infile):
         except:
             complexity='err'
         name='{0}_{1}_{2}_{3}_{4}_{5}_{6}_{7}'.format(i,len(consensus), len(cluster), min(left_edges), max(right_edges), mean_information, diversity, complexity )
-        consensus_dict[name]=(consensus,information_string)
+        consensus_dict[name]=(consensus,information_string, ','.join(left_edges), ','.join(right_edges))
     return consensus_dict
 
 
