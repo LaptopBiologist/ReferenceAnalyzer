@@ -1344,7 +1344,7 @@ def MultipleSequenceAlignment(infile, outfile, maxiters, logfile):
 def WriteFasta(sequences, outfile):
     outhandle=open(outfile, 'w')
     for i,s in  enumerate( sequences ):
-        N_prop=float(s.count('N'))/len(s)
+        N_prop=float(s.sequence.count('N'))/len(s.sequence)
         if N_prop>.05: continue
         outhandle.write('>{0}_{1}_{2}\n'.format(s.chrom, s.left, s.right))
         outhandle.write('{0}\n'.format(s.sequence))
