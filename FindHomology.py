@@ -243,7 +243,7 @@ def BlastSeqII(Query, Subject, Out, name, BlastDir):
     print (OutPath)
     errlog=open(OutPath+'/_err.log', 'a')
     column_spec='10 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue btop'
-    BLAST=subprocess.Popen([BlastDir+'/bin/blastn', '-query',Query, '-subject',Subject, '-outfmt', column_spec,  '-out', OutFile], stderr=errlog)
+    BLAST=subprocess.Popen([BlastDir, '-query',Query, '-subject',Subject, '-outfmt', column_spec,  '-out', OutFile], stderr=errlog)
     BLAST.communicate()
     errlog.close()
     return OutFile
