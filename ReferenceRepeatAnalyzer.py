@@ -10,6 +10,7 @@
 #-------------------------------------------------------------------------------
 import numpy
 import scipy
+import Bio
 from Bio import SeqIO
 from Bio import Seq
 from Bio.Blast import NCBIXML
@@ -165,10 +166,16 @@ def Epanichenikov(u):
     k=.75*(1-u**2)*(abs(u)<=1)
     return k
 
-def GetKMERS(sequence, k=10 ):
+def GetKMERS(sequence, k=10, unbiased =False):
 ##    complement=str(Seq.Seq( sequence).reverse_complement())
+    seq_len=len(sequence)
+    if unbiased==False:
+        indices= range(0,len(sequence)-k+1)
+    else:
+        sequence=sequence*2
+        indices= range(0, seq_len)
     kmerSet=set()
-    for x in range(len(sequence)-k+1):
+    for x in indices:
         kmerSet.add(str(sequence[x:x+k]))
 ##        kmerSet.add(str(complement[x:x+k]))
     return list(kmerSet)
@@ -788,38 +795,76 @@ def ClusterSet(sequences, threshold=.8, len_list=[],chr_names=[]):
     else:
         return consensus_list, counter, chr_list
 
-def QuickMatch(seq1, seq2, seeds=100):
-    assert len(seq1)==len(seq2)
-    if len(seq1)>20:
-        kmer_set_1=set(GetKMERS(seq1))
-        kmer_set_2=set(GetKMERS(seq2))
-        seeds=numpy.random.choice(list(kmer_set_1), size=seeds, replace=True)
-        seed_intersection=list( set(seeds)&kmer_set_2)
-    ##    print len(set(seeds))
-    ##    print len(seed_intersection)
-        disp=[]
-        if len(seed_intersection)==0:
-            return [], [], 0
-        for s in seed_intersection:
-            disp.append(seq1.find(s)-seq2.find(s))
-        mode=scipy.stats.mode(disp).mode[0]
-    ##    print mode
+def QuickMatch(query, subject, seed_count=100):
 
-    else:#If it is short, use brute force: check every rotation
-        mode_list=[]
-        perc_id=[]
-        for i in range(len(seq1)):
-            rotated_seq=seq1[i:]+seq1[:i]
-            seq1_array, seq2_array=numpy.fromstring(rotated_seq, '|S1'),numpy.fromstring( seq2, '|S1')
-            mode_list.append(i)
-            perc_id.append( numpy.mean( seq1_array== seq2_array))
-        mode=mode_list[ numpy.argmax(perc_id)]
+    "Uses a heuristic to match the phase between two sequences."
+##    assert len(seq1)==len(seq2)
+##    if len(seq1)>20:
+    #Determine the reverse complement sequence
+    query_rc=str( Bio.Seq.Seq(query).reverse_complement())
 
-    seq1_array, seq2_array=numpy.fromstring( seq1[mode:]+seq1[:mode], '|S1'),numpy.fromstring( seq2, '|S1')
-    return seq1_array, seq2_array , numpy.mean( seq1_array== seq2_array)
+    #Decompose the sequences into sets of 10-mers
+    kmer_set_query=set(GetKMERS(query))
+    kmer_set_rc=set(GetKMERS(query_rc))
+    kmer_set_subject=set(GetKMERS(subject))
+
+    #Choose a random set of 10-mers from teh subject sequence
+##    seeds=numpy.random.choice(list(kmer_set_subject), size=seed_count, replace=True)
+    seeds=kmer_set_subject
+
+    #Get the intersections of the subject and query 10-mers from both the forward
+    #and reverse strands
+    seed_intersection=list( set(seeds)&kmer_set_query)
+    seed_intersection_rc=list( set(seeds)&kmer_set_rc)
+
+    displacements=[]
+    displacements_rc=[]
+##    if len(seed_intersection)==0 and :
+##        return seq1, seq2
+    #Check the displacement between the first occurence of each kmer in the subject
+    #versus the query sequence
+    for s in seed_intersection:
+        distance=query.find(s)-subject.find(s)
+        if distance<0:
+            distance=len(query)+distance
+        displacements.append(distance)
+    #Check the displacements in the reverse complement
+    for s in seed_intersection_rc:
+        distance=query_rc.find(s)-subject.find(s)
+        if distance<0:
+            distance=len(query_rc)+distance
+        displacements_rc.append(distance)
+
+    if len (displacements)>0:
+        mode=scipy.stats.mode(displacements)
+        mode, count=mode.mode[0], mode.count[0]
+
+    else: mode,count=0,0
+    if len(displacements_rc)>0:
+        mode_rc=scipy.stats.mode(displacements_rc)
+        mode_rc, count_rc=mode_rc.mode[0], mode_rc.count[0]
+    else:
+        mode_rc,count_rc=0,0
+
+    seed_count=len(set(seeds))
+    for_prop=float(count)/seed_count
+    rev_prop=float(count_rc)/seed_count
+##
+##    if max(for_prop, rev_prop)<.1:
+##        return query, subject
+##    print count, count_rc
+    if len(seed_intersection)>len(seed_intersection_rc):
+        seq1_array, seq2_array=numpy.fromstring( query[mode:]+query[:mode], '|S1'),numpy.fromstring( subject, '|S1')
+    else:
+        seq1_array, seq2_array=numpy.fromstring( query_rc[mode_rc:]+query_rc[:mode_rc], '|S1'),numpy.fromstring( subject, '|S1')
+
+    return ''.join(seq1_array),''.join( seq2_array)# , numpy.mean( seq1_array== seq2_array)
 
 
-
+def Jaccard(seq1, seq2):
+    kmers1=set(GetKMERS(seq1, 8, unbiased=True))
+    kmers2=set(GetKMERS(seq2, 8, unbiased=True))
+    return float( len(kmers1&kmers2))/float (len(kmers1|kmers2))
 
 def PowerLaw(x,a,k,b):
     return a* numpy.exp(-k*x)+b
@@ -997,11 +1042,13 @@ def ExtractRepeatsOfSize(seq, rpt_len, threshold=.8):
 def GetRepeatsInInterval(seq, period, threshold, masked=None):
     if masked!=None:
         candidate_rpts=ExtractRepeatsOfSize(masked, period, threshold)
+        masked_seq=copy.copy( masked)
     else:
         candidate_rpts=ExtractRepeatsOfSize(seq, period, threshold)
+        masked_seq=copy.copy( seq)
     candidate_rpts=list(set(candidate_rpts))
     rpt_dict={}
-    masked_seq=copy.copy( seq)
+
     checked_rpts=set()
     identified_rpts=[0]*3
     last_len=len(candidate_rpts)+1
@@ -1341,7 +1388,33 @@ def MultipleSequenceAlignment(infile, outfile, maxiters, logfile):
         shutil.rmtree(temp_dir)
         print '\tDone.'
 
+def PhaseSequences(sequences):
+    leftmost_ind=numpy.argmin([s.left for s in sequences])
+    query_seq=sequences[leftmost_ind].sequence
+    for i,s in enumerate( sequences):
+        phased_seq, query_seq=QuickMatch(s.sequence,query_seq)
+        sequences[i].sequence=phased_seq
+
+    return sequences
+
+
+def PhaseFASTA(infile, outfile):
+    seqs=GetSeq(infile)
+    outhandle=open(outfile, 'w')
+    query_seq=seqs.values()[0]
+    for i,key in enumerate( seqs.keys()):
+        phased_seq, query_seq=QuickMatch(seqs[key],query_seq)
+        outhandle.write('>{0}\n'.format(key))
+        outhandle.write('{0}\n'.format(phased_seq))
+    outhandle.close()
+
+##    return sequences
+
+
 def WriteFasta(sequences, outfile):
+    #Place sequences in phase with the leftmost repeat:
+    sequences=PhaseSequences(sequences)
+
     outhandle=open(outfile, 'w')
     for i,s in  enumerate( sequences ):
         N_prop=float(s.sequence.count('N'))/len(s.sequence)
@@ -1365,6 +1438,8 @@ def SummarizeRepeats(sequences, outfile, log_handle):
 
     #Output sequences to *fasta
     WriteFasta(sequences, fasta_output)
+
+    if len(GetSeq(fasta_output).keys())<=1: return {}
 
     #If there are more than two sequences run an MSA
     #Run the multiple alignment
@@ -1520,7 +1595,8 @@ def GetConsensusFromFasta(infile):
         except:
             complexity='err'
         name='{0}_{1}_{2}_{3}_{4}_{5}_{6}_{7}'.format(i,len(consensus), len(cluster), min(left_edges), max(right_edges), mean_information, diversity, complexity )
-        consensus_dict[name]=(consensus,information_string, ','.join(left_edges), ','.join(right_edges))
+        consensus_dict[name]=(consensus,information_string, ','.join([str(l) for l in left_edges]),\
+         ','.join([str(r) for r in right_edges]))
     return consensus_dict
 
 
