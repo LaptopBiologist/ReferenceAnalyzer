@@ -13,6 +13,9 @@
 import numpy
 import HTSeq
 import csv
+import pyliftover
+from ReferenceAnalyzer.ReferenceRepeatAnalyzer import *
+
 
 class TandemLine():
     def __init__(self, row):
@@ -25,8 +28,10 @@ class TandemLine():
         except: self.repetition='err'
         self.start=int(row[6])
         self.end=int(row[7])
-        self.info_string=row[8]
-        self.seq=row[9]
+        self.starts=[int(s) for s in row[8].split(',')[:-1] ]
+        self.ends=[int(e) for e in row[9].split(',')[:-1] ]
+        self.info_string=row[10]
+        self.seq=row[11]
 
 
 
@@ -113,6 +118,44 @@ def AnnotateWithRefSeq(infile, outfile, annot_file, rpt_file):
 
 def LoadRepeatMaskerAnnotations():
     pass
+
+
+
+def UpdateWarburtonTable1(infile, ref_file,outfile):
+    inhandle=open(infile,'r')
+    intable=csv.reader(inhandle, delimiter='\t')
+
+    outhandle=open(outfile, 'w')
+
+    updated_file='{0}_hg38.tsv'.format( '.'.join( infile.split('.')[:-1]))
+    updated_handle=open(updated_file,'w')
+    updated_table=csv.writer(updated_handle, delimiter='\t')
+    header=intable.next()
+    updated_table.writerow(header)
+    lo=pyliftover.LiftOver('hg18', 'hg38')
+
+
+    seq=GetSeq(ref_file)
+    for row in intable:
+        chrom, interval=row[-1].split(':')
+        left,right=interval.split('-')
+        left=int(''.join(left.split(',')))
+        right=int(''.join(right.split(',')))
+        try:
+            coord_left=lo.convert_coordinate(chrom,left)[0][1]
+        except:
+            print row
+            print left
+            print lo.convert_coordinate(chrom,left)
+        chromosome,coord_right=lo.convert_coordinate(chrom,right)[0][:2]
+        new_line=row[:-1]+['{0}:{1}-{2}'.format(chromosome, coord_left, coord_right)]
+        seq_name='>{0}_{1}_{2}_{3}_{4}_{5}\n',format(row[7],row[2],row[3], chromosome, coord_left, coord_right,)
+        outfile.write(seq_name)
+        outfile.write ( '{0}\n'.format( seq[chromosome][coord_left:coord_right].upper() ) )
+        updated_table.writerow(new_line)
+    inhandle.close()
+    updated_handle.close()
+    outfile.close()
 
 
 def main():
