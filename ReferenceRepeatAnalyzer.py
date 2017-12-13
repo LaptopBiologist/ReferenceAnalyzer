@@ -16,7 +16,7 @@ from Bio import Seq
 from Bio.Blast import NCBIXML
 
 import matplotlib
-##matplotlib.use('Agg')
+matplotlib.use('Agg')
 from matplotlib import pyplot
 from statsmodels.tsa import stattools
 from statsmodels.tsa.stattools import acf
