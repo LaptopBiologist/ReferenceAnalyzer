@@ -16,7 +16,7 @@ from Bio import Seq
 from Bio.Blast import NCBIXML
 
 import matplotlib
-matplotlib.use('Agg')
+##matplotlib.use('Agg')
 from matplotlib import pyplot
 from statsmodels.tsa import stattools
 from statsmodels.tsa.stattools import acf
@@ -24,7 +24,7 @@ import sklearn
 import sklearn.gaussian_process
 import sklearn.kernel_ridge
 import sklearn.metrics
-import SeqManipulations
+##import SeqManipulations
 import sklearn.gaussian_process.kernels as kernels
 from sklearn.base import BaseEstimator
 from Bio import Seq
@@ -36,7 +36,7 @@ import csv
 import os
 import collections
 ##import ReferenceAnalyzer.FindHomology
-from FindHomology import ComputeKmerCompositionEntropy
+##from FindHomology import ComputeKmerCompositionEntropy
 
 import gzip
 
@@ -220,7 +220,7 @@ def CleanName(name):
         name='_'.join(name.split(i))
     return(name)
 
-def TandemFinder(infile, outdir,muscle_path,blast_path, threshold):
+def TandemFinder(infile, outdir,muscle_path,blast_path, threshold, minlen=30):
 ##    print MUSCLE_PATH
 ##    print BLAST_PATH
 ##    SetMUSCLEPath(muscle_path)
@@ -235,7 +235,10 @@ def TandemFinder(infile, outdir,muscle_path,blast_path, threshold):
     annotation_handle=open(out_annotation, 'w')
     annotation_table=csv.writer(annotation_handle, delimiter='\t')
     reference_name=infile.split('/')[-1].split('.')[0]
-    masked_reference='{0}/{1}_masked_{2}.fa.gz'.format(outdir, reference_name,int( threshold*100))
+    if threshold!='auto':
+        masked_reference='{0}/{1}_masked_{2}.fa.gz'.format(outdir, reference_name,int( threshold*100))
+    else:
+        masked_reference='{0}/{1}_masked_{2}.fa.gz'.format(outdir, reference_name,'auto')
     masked_handle=gzip.open(masked_reference, 'w')
     header=['Chrom', 'Repeat Length', 'Copy number', 'Shannon information', 'Diversity', 'Complexity', 'Start', 'End','Starts','Ends', 'Per nucleotide information', 'Sequence']
     annotation_table.writerow(header)
@@ -252,7 +255,8 @@ def TandemFinder(infile, outdir,muscle_path,blast_path, threshold):
 ##        out_root='.'.join( outfile.split('/')[-1].split('.')[:-1])
 ##        outimage='{0}/{1}_{2}.png'.format(out_dir, out_root, CleanName( key))
         masked_seq=sequences[key].upper()
-        interval_dictionary= FindPeriodicity(sequences[key].upper(), '', key)
+        interval_dictionary= FindPeriodicity(sequences[key].upper(), '',threshold, key)
+##        print interval_dictionary
         #Sort intervals by length:
         interval_list=[]
         true_intervals={}
@@ -266,11 +270,17 @@ def TandemFinder(infile, outdir,muscle_path,blast_path, threshold):
         for period, interval, interval_length in sorted_intervals:
             left, right=interval
             #Modified to return a dictionary
-            if period<30:
-                masked=MaskRepeatsOfSize(masked_seq[left:right], period, threshold)
-                masked_seq=masked_seq[:left]+masked+masked_seq[right:]
+            if threshold=='auto':
+                cutoff=DetermineThreshold(period)
+            else:
+                cutoff=threshold
+            print period, interval, interval_length
+            if period<minlen:
+                if minlen<30:
+                    masked=MaskRepeatsOfSize(masked_seq[left:right], period, cutoff)
+                    masked_seq=masked_seq[:left]+masked+masked_seq[right:]
                 continue
-            repeat_dict, masked=GetRepeatsInInterval(sequences[key][left:right], period, threshold, masked_seq[left:right])
+            repeat_dict, masked=GetRepeatsInInterval(sequences[key][left:right], period, cutoff, masked_seq[left:right])
             masked_seq=masked_seq[:left]+masked+masked_seq[right:]
             #Update repeat positions:
             repeat_count=0
@@ -317,7 +327,10 @@ def TandemFinder(infile, outdir,muscle_path,blast_path, threshold):
 
                 #Build consensus
                 fasta_name='{0}/{1}_{2}_{3}_{4}'.format(repeat_dir, key.split('_')[0], major_period, left_boundary, right_boundary)
-                cons_dict=SummarizeRepeats(repeat_list, fasta_name, log_file)
+                try:
+                    cons_dict=SummarizeRepeats(repeat_list, fasta_name, log_file)
+                except:
+                    continue
 
             #Write consensus
                 for cons_name in cons_dict.keys():
@@ -436,7 +449,7 @@ def FindBestPhase(seq, repeat_size, identity_threshold):
 
 
 
-def FindPeriodicity(seq,outfile,seq_key='', window_size=50000, step_size=50000):
+def FindPeriodicity(seq,outfile,threshold,seq_key='', window_size=50000, step_size=50000):
 
 ##    print len(seq)
     period_list=[]
@@ -458,17 +471,29 @@ def FindPeriodicity(seq,outfile,seq_key='', window_size=50000, step_size=50000):
             for j in range(5):
                 if len(seq_slice)<100: break
                 try:
-                    autocorr=Autocorrel(seq_slice,max_repeat)
+                    autocorr=Autocorrel(seq_slice,max_repeat, unbiased=True, complex_num=False)
 
                 except:
                     break
+                if len(autocorr)<2: continue
+                if threshold=='auto':
+                    cutoff=DetermineThreshold(numpy.arange(len(autocorr),0, -1))
 
-                true_period=numpy.argmax(autocorr[1:])+1
+                    autocorr[autocorr<cutoff]=0
+##                print len(autocorr)
+
+                bias_factor=(len(autocorr[1:])- numpy.arange(0,len(autocorr[1:]),1.))/len(autocorr[1:])
+##                pyplot.plot(bias_factor)
+####                pyplot.plot(cutoff)
+##                pyplot.show()
+##                print jabber
+                true_period=numpy.argmax(autocorr[1:]*bias_factor )+1
 
                 #Only interested in base periodicities>3
                 if true_period>=3:
                     #Only going to look for periodicities>20
                     period=numpy.argmax(autocorr[3:])+3
+
                     #Note that this periodicity was identified
 
 
@@ -476,7 +501,12 @@ def FindPeriodicity(seq,outfile,seq_key='', window_size=50000, step_size=50000):
 
                     #Remove repeats of this length from the sequence
                     len_seq=len(seq_slice)
-                    seq_slice=RemoveRepeatsOfSize(seq_slice, period, .8)
+                    if threshold=='auto':
+                        cutoff=DetermineThreshold(period)
+                    else: cutoff=threshold
+##                    if autocorr[period]< cutoff: continue
+                    if max(ShiftedIdentity(seq_slice, period))<cutoff: break
+                    seq_slice=RemoveRepeatsOfSize(seq_slice, period, cutoff)
                     if len_seq==len(seq_slice): break
                     if windows_containing_period[window_size].has_key(period)==False:
                         windows_containing_period[window_size] [period]=[]
@@ -1040,8 +1070,9 @@ def ExtractRepeatsOfSize(seq, rpt_len, threshold=.8):
     return repeats
 
 def GetRepeatsInInterval(seq, period, threshold, masked=None):
+
     if masked!=None:
-        candidate_rpts=ExtractRepeatsOfSize(masked, period, threshold)
+        candidate_rpts=ExtractRepeatsOfSize(masked, period, threshold-.05)
         masked_seq=copy.copy( masked)
     else:
         candidate_rpts=ExtractRepeatsOfSize(seq, period, threshold)
@@ -1161,6 +1192,7 @@ def AnalyzeHitsAtPeriod(identity_signal, expected_periodicity, threshold ):
 
 def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_length=30):
 
+
     #Note to self: Want to retain information about their locations
 
     #Only search for the query repeat
@@ -1176,7 +1208,7 @@ def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_l
 
     #If no hits, terminate
     if len(hits)==0:
-        return [], masked_sequence,0
+        return {}, masked_sequence,0
 
     #Compute the distance between adjacent hits--the actual periodicity of the repeat
     distances=numpy.diff(hits)
@@ -1323,6 +1355,7 @@ def LaggedUngappedAlignment(query, target):
 
     else:
         split_indices=numpy.arange(0, len(target), 100000)
+        print split_indices
 
         if max(split_indices)!=len(target):
             split_indices=numpy.hstack((split_indices, len(target) ))
@@ -1336,7 +1369,7 @@ def LaggedUngappedAlignment(query, target):
                 percent_id=LaggedUngappedAlignment(query, sliced_seq)
 
             else:
-##                print v-len(query),split_indices[i+1]
+                print v-len(query),split_indices[i+1]
                 sliced_seq=target[v-len(query):split_indices[i+1]]
                 percent_id=numpy.hstack((percent_id,LaggedUngappedAlignment(query, sliced_seq)[1:] ))
         return percent_id
@@ -1699,7 +1732,7 @@ def Autocorrel(seq, max_size, complex_num=True,unbiased=False,  p=False):
     ##    return LaggedIdentity(seq_array, max_size)
     ##    AT=numpy.array([0]*len(seq_array))
     ##    GC=numpy.array([0]*len(seq_array))
-    ##    AT[(seq_array=='A')]=1
+    ##    AT[(seq_array=='  A')]=1
     ##    AT[(seq_array=='T')]=-1
     ##    GC[(seq_array=='G')]=1
     ##    GC[(seq_array=='C')]=-1
@@ -1712,8 +1745,10 @@ def Autocorrel(seq, max_size, complex_num=True,unbiased=False,  p=False):
         #G/C is the imaginary plane
         seq_array[char_array=='G']+=1j
         seq_array[char_array=='C']-=-1j
+        autocorr=stattools.acf(seq_array,unbiased=unbiased,nlags=max_size, fft=True) #demean=False, fft=True)# nlags=max_size, fft=True)
+        return autocorr
     else:
-        seq_array=SeqToExanded(seq)
+        seq_array=SeqToExanded(seq, ignore_N=True)
 ##    return seq_array
 ##    acf_AT, q_AT, p_AT=acf(AT,nlags=max_size,qstat=True, fft=True)
 ##    acf_GC, q_GC, p_GC=acf(AT,nlags=max_size,qstat=True, fft=True)
@@ -1721,8 +1756,22 @@ def Autocorrel(seq, max_size, complex_num=True,unbiased=False,  p=False):
 ##    pyplot.show()
 ##    autocorr=numpy.sign(acf_AT* acf_GC)* ( acf_AT* acf_GC)**.5
 ##    autocorr=(acf_AT+acf_GC)/2.
-    autocorr=stattools.acf(seq_array,unbiased=unbiased,nlags=max_size, fft=True) #demean=False, fft=True)# nlags=max_size, fft=True)
+##    autocorr=stattools.acf(s eq_array,unbiased=unbiased,nlags=max_size, fft=True) #demean=False, fft=True)# nlags=max_size, fft=True)
 ##    avf = stattools.acovf(seq_array, unbiased=False, demean=True, fft=True)
+        query_length=len(seq)
+
+        sig_1=seq_array
+        sig_2=numpy.hstack((seq_array, seq_array))
+        matches=scipy.signal.fftconvolve(sig_1, sig_2[::-1])[3::4]
+        perc_id=matches/query_length
+        if unbiased==True:
+            return perc_id[query_length-1:-query_length+1][::-1][:query_length/2]
+        if unbiased==False:
+            bias=2*numpy.arange(query_length/2,0,-1.)/query_length
+##            pyplot.plot(bias)
+##            pyplot.show()
+            return perc_id[query_length-1:-query_length+1][::-1][:query_length/2]*bias#+(1-bias)
+
 ##    if complex_num==True:
 ##        autocorr = avf[:max_size + 1] / avf[0]
 ##    else:autocorr = avf[:max_size*4 + 1] / avf[0]
@@ -1736,8 +1785,11 @@ def Autocorrel(seq, max_size, complex_num=True,unbiased=False,  p=False):
     else:
         return autocorr[::4]
 
-def SeqToExanded(seq):
+def SeqToExanded(seq,ignore_N=False):
+
     char_array=numpy.fromstring(seq.upper(), '|S1')
+    if ignore_N==True:
+        char_array=char_array[char_array!='N']
 ##    char_array[char_array!='N']
 ##    num_array=numpy.array([0.]*len(char_array)*4)
     num_array=numpy.ndarray(((len(char_array))*4))
@@ -2282,6 +2334,34 @@ def AnalyzeRead(read):
     return repeats
 
 
+def RandomSequence(length, gc=.5):
+    AT_prob=(1-gc)/2.
+    GC_prob=gc/2.
+    nt=['A','T','G', 'C']
+    probs=[AT_prob, AT_prob, GC_prob,GC_prob]
+    return ''.join( numpy.random.choice(nt, size=length, p=probs, replace=True))
+
+def ApproximateRandomAlignment(length, gc=.4):
+    """Approximate the expected percent identity of an ungapped alignment between
+    two sequences of a given length with a Normal distribution using the Central
+    Limit Theorem"""
+
+    #The probability that two randomly chosen nucleotides match
+    #Whether or not two nucleotides match
+    p=((gc)**2+(1-gc)**2)/2.
+
+    #The expected identity is probability of a match can be modelled with a
+    #Bernoulli random variable
+    mean= p
+    std=(p*(1-p)/length)**.5
+    return mean, std
+
+
+def DetermineThreshold(length, alpha_cutoff=.99999):
+    mu,sig=ApproximateRandomAlignment(length)
+    threshold=scipy.stats.norm.ppf(alpha_cutoff, mu,sig)
+    return threshold+.05
+
 
 def main(argv):
     print argv
@@ -2291,12 +2371,19 @@ def main(argv):
     print param
     if param=={}: return
     if param.has_key('--cutoff')==True:
-        cutoff=float(param['--cutoff'])
+        try:
+            cutoff=float(param['--cutoff'])
+        except:
+            cutoff='auto'
     else: cutoff=.8
+    if param.has_key('-minlen')==True:
+        minlen=int(param['-minlen'])
+    else:
+        minlen=30
 ##    SetBLASTPath(param['-b'])
 ##    SetMUSCLEPath(param['-m'])
 
-    TandemFinder(param['-i'], param['-o'], param['-m'], param['-b'], cutoff )
+    TandemFinder(param['-i'], param['-o'], param['-m'], param['-b'], cutoff, minlen )
 
 if __name__ == '__main__':
     main(sys.argv)
