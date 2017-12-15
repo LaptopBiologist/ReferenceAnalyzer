@@ -16,7 +16,7 @@ from Bio import Seq
 from Bio.Blast import NCBIXML
 
 import matplotlib
-##matplotlib.use('Agg')
+matplotlib.use('Agg')
 from matplotlib import pyplot
 from statsmodels.tsa import stattools
 from statsmodels.tsa.stattools import acf
@@ -227,6 +227,7 @@ def TandemFinder(infile, outdir,muscle_path,blast_path, threshold, minlen=30):
 ##    SetBLASTPath(blast_path)
     print BLAST_PATH
     print MUSCLE_PATH
+    print "Magic."
     MakeDir(outdir)
     out_fasta='{0}/consensus_repeats.fa'.format(outdir)
     fasta_handle=open(out_fasta, 'w')
@@ -249,7 +250,7 @@ def TandemFinder(infile, outdir,muscle_path,blast_path, threshold, minlen=30):
     MakeDir(repeat_dir)
     MakeDir(image_dir)
     sequences=GetSeq(infile,upper=True, rename=False, clean=True, remove_underscores=True)
-    for key in sorted( sequences.keys(), reverse=True):
+    for key in sorted( sequences.keys(), reverse=False):
 ##        if key!='3R': continue
 ##        out_dir='/'.join(outfile.split('/')[:-1])
 ##        out_root='.'.join( outfile.split('/')[-1].split('.')[:-1])
@@ -269,9 +270,15 @@ def TandemFinder(infile, outdir,muscle_path,blast_path, threshold, minlen=30):
 
         for period, interval, interval_length in sorted_intervals:
             left, right=interval
+            left=max(0 , left-3*period)
+            right=min(len(masked_seq), right+3*period)
+            try:
+                pGC=PercentGC(sequences[key][left:right])
+            except:
+                continue
             #Modified to return a dictionary
             if threshold=='auto':
-                cutoff=DetermineThreshold(period)
+                cutoff=DetermineThreshold(period, gc=pGC)
             else:
                 cutoff=threshold
             print period, interval, interval_length
@@ -477,7 +484,11 @@ def FindPeriodicity(seq,outfile,threshold,seq_key='', window_size=50000, step_si
                     break
                 if len(autocorr)<2: continue
                 if threshold=='auto':
-                    cutoff=DetermineThreshold(numpy.arange(len(autocorr),0, -1))
+                    try:
+                        gc=PercentGC(seq_slice)
+                    except: break
+                    cutoff=DetermineThreshold(numpy.arange(len(autocorr),0, -1), gc=gc)-.05
+                    print cutoff
 
                     autocorr[autocorr<cutoff]=0
 ##                print len(autocorr)
@@ -485,9 +496,10 @@ def FindPeriodicity(seq,outfile,threshold,seq_key='', window_size=50000, step_si
                 bias_factor=(len(autocorr[1:])- numpy.arange(0,len(autocorr[1:]),1.))/len(autocorr[1:])
 ##                pyplot.plot(bias_factor)
 ####                pyplot.plot(cutoff)
-##                pyplot.show()
+##                pyplot.show()t
 ##                print jabber
-                true_period=numpy.argmax(autocorr[1:]*bias_factor )+1
+                true_periods=numpy.argsort(autocorr[1:]*bias_factor )+1
+                true_periods=true_periods[autocorr!=0]
 
                 #Only interested in base periodicities>3
                 if true_period>=3:
@@ -502,7 +514,7 @@ def FindPeriodicity(seq,outfile,threshold,seq_key='', window_size=50000, step_si
                     #Remove repeats of this length from the sequence
                     len_seq=len(seq_slice)
                     if threshold=='auto':
-                        cutoff=DetermineThreshold(period)
+                        cutoff=DetermineThreshold(period, gc=gc)
                     else: cutoff=threshold
 ##                    if autocorr[period]< cutoff: continue
                     if max(ShiftedIdentity(seq_slice, period))<cutoff: break
@@ -1014,11 +1026,28 @@ def IdentifyHighIdentityRegions(identity, threshold):
         intervals.append(( indices[splits[i]+1], indices[ splits[i+1]]))
     return intervals
 
-def ExtractRepeatsOfSize(seq, rpt_len, threshold=.8):
+def PercentGC(seq):
+    pA, pT, pC, pG=seq.count('A'), seq.count('T'), seq.count('G'), seq.count('C')
+    total=pA+pT+pC+pG
+    return float(pG+pC)/total
 
+
+def ExtractRepeatsOfSize(seq, rpt_len, threshold=.8, plot=False):
+    try:
+        pGC=PercentGC(seq)
+    except:
+        return []
+##    threshold=DetermineThreshold(rpt_len, gc=pGC)
+    background_cutoff=DetermineThreshold(rpt_len, .99, pGC)-.05
+    mean_id, std_id=ApproximateRandomAlignment(rpt_len,pGC )
+    exp_slope=(1.-mean_id)/rpt_len
+    print background_cutoff
     identity_signal=ShiftedIdentity(seq, rpt_len)
+    if plot==True:
+        pyplot.plot(identity_signal, c='blue')
 ##    return identity_signal
     high_identity_intervals=IdentifyHighIdentityRegions(identity_signal, threshold)
+##    print high_identity_intervals
     #The intervals identified go from the end of the first repeat in the array
     #to the beginning of the second repeat.
 ##    return high_identity_intervals
@@ -1050,29 +1079,63 @@ def ExtractRepeatsOfSize(seq, rpt_len, threshold=.8):
         end=l+ numpy.where(identity_signal[l:r]>=local_cutoff)[0][-1]
         boundaries.append((begin, end))
         num_rpts=int( (end-begin)/rpt_len)
-        #The we determine the largest tandem of complete repeat units that could
-        #fit in this interval
-        expected_array_size=rpt_len*num_rpts
 
-        #The set of positions within this array could start is:
-        #(begin, end - expected_array_size)
-        #We assume each is equally likely and take the expected value as
-        #the array's start.
-        uncertainty=int(((end-begin)-expected_array_size)/2)
-        repeat_begin= begin+ uncertainty
+        #Now we extend outward until the sequence identity is indistinguishable
+        #from random sequence
+        offset=int( (background_cutoff-mean_id)/exp_slope)
+
+        bg_begin=max( numpy.where(identity_signal[:begin]<=background_cutoff)[0])-offset
+        bg_end=end+ min( numpy.where(identity_signal[end:]<=background_cutoff)[0])+offset
+        if plot==True:
+            pyplot.plot([bg_begin,bg_end], [background_cutoff]*2, c='r')
+##        #The we determine the largest tandem of complete repeat units that could
+##        #fit in this interval
+##        expected_array_size=rpt_len*num_rpts
+
+##        #The set of positions within this array could start is:
+##        #(begin, end - expected_array_size)
+##        #We assume each is equally likely and take the expected value as
+##        #the array's start.
+##        uncertainty=int(((end-begin)-expected_array_size)/2)
+##        repeat_begin= begin+ uncertainty
+
+        #Extract the second repeat from the right and left boundaries
+        left_repeat=(seq[bg_begin+rpt_len:bg_begin+rpt_len*2],(bg_begin+rpt_len,bg_begin+rpt_len*2))
+        right_repeat=(seq[bg_end-2*rpt_len:bg_end-rpt_len],(bg_end-2*rpt_len,bg_end-rpt_len))
+
+        #Test these two repeats to determine which
+        sample_seq=seq[bg_begin-2*rpt_len:bg_end+2*rpt_len]
+        left_ccf=LaggedUngappedAlignment(left_repeat[0], sample_seq)
+        right_ccf=LaggedUngappedAlignment(right_repeat[0], sample_seq)
+##        pyplot.close()
+##        pyplot.plot(left_ccf)
+##        pyplot.show()
+##        pyplot.plot(right_ccf)
+##        pyplot.show()
+##        print threshold
+        left_score=numpy.sum(left_ccf[left_ccf>=threshold])
+        right_score=numpy.sum(right_ccf[right_ccf>=threshold])
+##        print left_score, right_score
+        if left_score>right_score:
+            repeats.append(left_repeat)
+            if plot==True: pyplot.scatter(bg_begin, background_cutoff, c='orange', zorder=0)
+        else:
+            repeats.append(right_repeat)
+            if plot==True: pyplot.scatter(bg_end, background_cutoff, c='orange', zorder=0)
+
 
         #We extract the second repeat in the array. The above determination of
         #the starting point is likely to make some error, but we expect the true
         #juncion to be near the edge of the repeat.
-        repeats.append(( seq[repeat_begin:repeat_begin+rpt_len],(repeat_begin,repeat_begin+rpt_len)  ))
+##        repeats.append(( seq[repeat_begin:repeat_begin+rpt_len],(repeat_begin,repeat_begin+rpt_len)  ))
 
-
+##    if plot==True: pyplot.show()
     return repeats
 
 def GetRepeatsInInterval(seq, period, threshold, masked=None):
 
     if masked!=None:
-        candidate_rpts=ExtractRepeatsOfSize(masked, period, threshold-.05)
+        candidate_rpts=ExtractRepeatsOfSize(masked, period, threshold)
         masked_seq=copy.copy( masked)
     else:
         candidate_rpts=ExtractRepeatsOfSize(seq, period, threshold)
@@ -2357,8 +2420,8 @@ def ApproximateRandomAlignment(length, gc=.4):
     return mean, std
 
 
-def DetermineThreshold(length, alpha_cutoff=.99999):
-    mu,sig=ApproximateRandomAlignment(length)
+def DetermineThreshold(length, alpha_cutoff=.99999, gc=.4):
+    mu,sig=ApproximateRandomAlignment(length, gc)
     threshold=scipy.stats.norm.ppf(alpha_cutoff, mu,sig)
     return threshold+.05
 
