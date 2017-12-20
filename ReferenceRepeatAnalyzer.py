@@ -24,7 +24,7 @@ import sklearn
 import sklearn.gaussian_process
 import sklearn.kernel_ridge
 import sklearn.metrics
-##import SeqManipulations
+import SeqManipulations
 import sklearn.gaussian_process.kernels as kernels
 from sklearn.base import BaseEstimator
 from Bio import Seq
@@ -227,7 +227,7 @@ def TandemFinder(infile, outdir,muscle_path,blast_path, threshold, minlen=30):
 ##    SetBLASTPath(blast_path)
     print BLAST_PATH
     print MUSCLE_PATH
-    print "Magic."
+
     MakeDir(outdir)
     out_fasta='{0}/consensus_repeats.fa'.format(outdir)
     fasta_handle=open(out_fasta, 'w')
@@ -455,8 +455,7 @@ def FindBestPhase(seq, repeat_size, identity_threshold):
     return mode_list, ''.join(numpy.array(nonrpt).flatten()), len_list
 
 
-
-def FindPeriodicity(seq,outfile,threshold,seq_key='', window_size=50000, step_size=50000):
+def FindPeriodicity(seq,outfile,threshold=.8,window_size=50000, step_size=50000):
 
 ##    print len(seq)
     period_list=[]
@@ -466,71 +465,84 @@ def FindPeriodicity(seq,outfile,threshold,seq_key='', window_size=50000, step_si
     len_dict={}
     windows_containing_period={}
     #Test over range of window sizes: 1000, 10000, 100000, 1000000
-    for window_size in [10000,50000,100000,500000]:
+    for window_size in [10000,50000,100000,250000,500000]:
+##        print window_size
         windows_containing_period[window_size]={}
         step_size=window_size/2
         max_repeat=window_size/2
         window_edges=numpy.arange(0,len(seq)-window_size+step_size, step_size)
-
+        if len(window_edges)==0: continue
+        if window_edges[-1]>=len(seq)-window_size:
+            window_edges=numpy.hstack((window_edges, [len(seq)-window_size]))
         for i in range(len(window_edges)-1) :
+##            print window_edges[i], window_edges[i]+window_size
             seq_slice=seq[window_edges[i]:window_edges[i]+window_size]
+            try:
+                gc=PercentGC(seq_slice)
+            except:
+##                print 'Divide by Zero Error'
+                continue
 
             for j in range(5):
                 if len(seq_slice)<100: break
                 try:
-                    autocorr=Autocorrel(seq_slice,max_repeat, unbiased=True, complex_num=False)
+                    autocorr=Autocorrel(seq_slice,max_repeat, False, True)
+                    bias_factor=(len(autocorr[1:])- numpy.arange(0,len(autocorr[1:]),1.))/len(autocorr[1:])
+                    true_periods=sorted( list(set( [ numpy.argmax(autocorr[1:]*bias_factor)+1, numpy.argmax(autocorr[1:])+1])))
 
                 except:
+##                    print 'ACF error'
                     break
-                if len(autocorr)<2: continue
-                if threshold=='auto':
-                    try:
-                        gc=PercentGC(seq_slice)
-                    except: break
-                    cutoff=DetermineThreshold(numpy.arange(len(autocorr),0, -1), gc=gc)-.05
-                    print cutoff
 
-                    autocorr[autocorr<cutoff]=0
-##                print len(autocorr)
+##                if max(true_periods)>100:  print true_periods
+                found_repeats=False
+##                if window_edges[i]<750000 and window_edges[i]>700000:
+##                    pyplot.plot(autocorr)
+##                    print true_periods
+##                    pyplot.show()
 
-                bias_factor=(len(autocorr[1:])- numpy.arange(0,len(autocorr[1:]),1.))/len(autocorr[1:])
-##                pyplot.plot(bias_factor)
-####                pyplot.plot(cutoff)
-##                pyplot.show()t
-##                print jabber
-                true_periods=numpy.argsort(autocorr[1:]*bias_factor )+1
-                true_periods=true_periods[autocorr!=0]
-
+                for true_period in true_periods:
                 #Only interested in base periodicities>3
-                if true_period>=3:
-                    #Only going to look for periodicities>20
-                    period=numpy.argmax(autocorr[3:])+3
-
-                    #Note that this periodicity was identified
-
-
+                    if true_period>=3:
+                        #Only going to look for periodicities>20
+##                        period=numpy.argmax(autocorr[3:])+3
+                        period=true_period
+                        #Note that this periodicity was identified
 
 
-                    #Remove repeats of this length from the sequence
-                    len_seq=len(seq_slice)
-                    if threshold=='auto':
-                        cutoff=DetermineThreshold(period, gc=gc)
-                    else: cutoff=threshold
-##                    if autocorr[period]< cutoff: continue
-                    if max(ShiftedIdentity(seq_slice, period))<cutoff: break
-                    seq_slice=RemoveRepeatsOfSize(seq_slice, period, cutoff)
-                    if len_seq==len(seq_slice): break
-                    if windows_containing_period[window_size].has_key(period)==False:
-                        windows_containing_period[window_size] [period]=[]
-                    windows_containing_period[window_size] [period].append(i)
-                    period_list.append(period)
 
-                            #Remember how many of instances of this repeat were identified
-                else: break
+
+                        #Remove repeats of this length from the sequence
+                        original_N_count=seq_slice.count('N')
+                        seq_slice=RandomSequence(period)+seq_slice+RandomSequence(period)
+                        if threshold=='auto':
+                            cutoff=DetermineThreshold(period, gc=gc)
+                        else: cutoff=threshold
+##                        if window_edges[i]<750000 and window_edges[i]>700000:
+##                            pyplot.plot(ShiftedIdentity(seq_slice, period))
+##                            pyplot.show()
+
+                        #Mask all tandem repeats of this periodicity
+                        seq_slice=RemoveRepeatsOfSize(seq_slice, period, cutoff)[period:-period]
+                        new_N_count=seq_slice.count('N')
+
+                        #If no repeats were identified and masked...
+                        if original_N_count==new_N_count: continue
+                        if windows_containing_period[window_size].has_key(period)==False:
+                            windows_containing_period[window_size] [period]=[]
+                        windows_containing_period[window_size] [period].append(i)
+                        if period>3000:
+                            print window_edges[i], period
+                        period_list.append(period)
+                        found_repeats=True
+
+                                #Remember how many of instances of this repeat were identified
+                if found_repeats==False: break
         #Consolidate intervals within window length
 ##
         for period in windows_containing_period[window_size]:
-            windows_containing_period[window_size] [period]=[(window_edges[l],window_edges[r]+window_size) \
+            extended_window=min(100000, window_size)
+            windows_containing_period[window_size] [period]=[(max(0, window_edges[l]-extended_window),min(len(seq), window_edges[r]+window_size+extended_window)) \
             for l,r in  LookForSplits(sorted( list( set( windows_containing_period[window_size] [period]))))]
 
     #Group intervals across windows by period:
@@ -547,6 +559,144 @@ def FindPeriodicity(seq,outfile,threshold,seq_key='', window_size=50000, step_si
         period_dict[period]=GroupOverlappingIntervals(period_dict[period])
 
     return period_dict
+
+
+
+##def FindPeriodicity(seq,outfile,threshold,seq_key='', window_size=50000, step_size=50000):
+##
+####    print len(seq)
+##    period_list=[]
+##    window_list=[]
+##    corr_list=[]
+##    mode_list={}
+##    len_dict={}
+##    windows_containing_period={}
+##    #Test over range of window sizes: 1000, 10000, 100000, 1000000
+##    for window_size in [10000,50000,100000,500000]:
+##        windows_containing_period[window_size]={}
+##        step_size=window_size/2
+##        max_repeat=window_size/2
+##        window_edges=numpy.arange(0,len(seq)-window_size+step_size, step_size)
+##
+##        for i in range(len(window_edges)-1) :
+##            seq_slice=seq[window_edges[i]:window_edges[i]+window_size]
+##
+##            for j in range(5):
+##                if len(seq_slice)<100: break
+##                try:
+##                    raw_autocorr=Autocorrel(seq_slice,max_repeat, unbiased=True, complex_num=False)
+##
+##                except:
+##                    break
+##                autocorr=numpy.copy( raw_autocorr)
+##                if len(autocorr)<2: continue
+##                if threshold=='auto':
+##                    try:
+##                        gc=PercentGC(seq_slice)
+##                    except: break
+##                    cutoff=DetermineThreshold(numpy.arange(len(autocorr),0, -1),.9999, gc=gc)-.05
+####                    print cutoff
+##
+##                    autocorr[autocorr<cutoff]=0
+####                print len(autocorr)
+##
+##                bias_factor=(len(autocorr[1:])- numpy.arange(0,len(autocorr[1:]),1.))/len(autocorr[1:])
+####                pyplot.plot(bias_factor)
+######                pyplot.plot(cutoff)
+####                pyplot.show()t
+####                print jabber
+##                true_periods=numpy.argsort(autocorr[1:]*bias_factor)[::-1] +1
+####                print true_periods
+##                true_periods=true_periods[autocorr[true_periods] !=0]
+##                lower_cutoff=(true_periods*.85).astype(int)
+##                upper_cutoff=(true_periods*1.15).astype(int)
+##                local_cutoff=[]
+##                for index in range(len(lower_cutoff)):
+##                    if lower_cutoff[index]==upper_cutoff[index]:
+##                        local_cutoff.append(0)
+##                        continue
+##                    local_mean=(numpy.nanmean(raw_autocorr[lower_cutoff[index]:upper_cutoff[index]]))
+##                    local_std=(numpy.nanstd(raw_autocorr[lower_cutoff[index]:upper_cutoff[index]]))
+####                    print local_mean
+####                    print local_std
+##                    local_cutoff.append(local_mean+3*local_std)
+##                local_cutoff=numpy.array(local_cutoff)
+####                print len(loca)
+####                print jabber
+##                try:
+##                    true_periods=true_periods[raw_autocorr[true_periods]>= local_cutoff]
+##                except:
+##                    print len (true_periods)
+##                    print len(local_cutoff)
+##                    print true_periods
+##                    print local_cutoff
+##                    print jabber
+##
+##                #Only interested in base periodicities>3
+##                true_periods=true_periods[true_periods>30]
+####                if len(true_periods)>0: print true_periods
+##                if len(true_periods)>10:
+##                    true_periods=true_periods[:10]
+##                found_period=False
+##                for true_period in true_periods:
+##
+##
+##                        #Only going to look for periodicities>20
+####                        period=numpy.argmax(autocorr[3:])+3
+##                        period=true_period
+##                        #Note that this periodicity was identified
+##
+##
+##
+##
+##                        #Remove repeats of this length from the sequence
+##                        len_seq=len(seq_slice)
+##                        temp_seq_slice=seq_slice
+##                        if threshold=='auto':
+##                            cutoff=DetermineThreshold(period, gc=gc)
+##                        else: cutoff=threshold
+##    ##                    if autocorr[period]< cutoff: continue
+####                        if period>10000:
+####                            r=ExtractRepeatsOfSize(temp_seq_slice, period, cutoff, True)
+####                            pyplot.show()
+##                        try:
+##                            if max(ShiftedIdentity(temp_seq_slice, period))<cutoff: continue
+##                        except:
+##                            continue
+##                        seq_slice=RemoveRepeatsOfSize(temp_seq_slice, period, cutoff)[period:-period]
+##
+##                        if len_seq==len(seq_slice): continue
+##                        if windows_containing_period[window_size].has_key(period)==False:
+##                            windows_containing_period[window_size] [period]=[]
+##                        windows_containing_period[window_size] [period].append(i)
+##                        period_list.append(period)
+##                        found_period=True
+##                        break
+##                if found_period==False: break
+##                            #Remember how many of instances of this repeat were identified
+####                else: break
+##        #Consolidate intervals within window length
+####
+####        print windows_containing_period
+##        for period in windows_containing_period[window_size]:
+##            print period
+##            windows_containing_period[window_size] [period]=[(window_edges[l],window_edges[r]+window_size) \
+##            for l,r in  LookForSplits(sorted( list( set( windows_containing_period[window_size] [period]))))]
+##
+##    #Group intervals across windows by period:
+##    period_dict={}
+##    for window_size in windows_containing_period.keys():
+##        for period in windows_containing_period[window_size].keys():
+##            if period_dict.has_key(period)==False:
+##                period_dict[period]=[]
+##            for interval in windows_containing_period[window_size][period]:
+##                period_dict[period].append(interval)
+####    return period_dict
+##    #Group overlapping windows:
+##    for period in period_dict.keys():
+##        period_dict[period]=GroupOverlappingIntervals(period_dict[period])
+##
+##    return period_dict
 
 
 def GroupOverlappingIntervals(intervals):
@@ -608,6 +758,7 @@ def RemoveRepeatsOfSize(seq, rpt_len, threshold):
         l,r=interval
         r+=rpt_len
         seq_array[l:r]='N'
+    return ''.join(seq_array)
     unmasked_ind=seq_array!='N'
 
     return ''.join(seq_array[unmasked_ind])
@@ -837,72 +988,6 @@ def ClusterSet(sequences, threshold=.8, len_list=[],chr_names=[]):
     else:
         return consensus_list, counter, chr_list
 
-def QuickMatch(query, subject, seed_count=100):
-
-    "Uses a heuristic to match the phase between two sequences."
-##    assert len(seq1)==len(seq2)
-##    if len(seq1)>20:
-    #Determine the reverse complement sequence
-    query_rc=str( Bio.Seq.Seq(query).reverse_complement())
-
-    #Decompose the sequences into sets of 10-mers
-    kmer_set_query=set(GetKMERS(query))
-    kmer_set_rc=set(GetKMERS(query_rc))
-    kmer_set_subject=set(GetKMERS(subject))
-
-    #Choose a random set of 10-mers from teh subject sequence
-##    seeds=numpy.random.choice(list(kmer_set_subject), size=seed_count, replace=True)
-    seeds=kmer_set_subject
-
-    #Get the intersections of the subject and query 10-mers from both the forward
-    #and reverse strands
-    seed_intersection=list( set(seeds)&kmer_set_query)
-    seed_intersection_rc=list( set(seeds)&kmer_set_rc)
-
-    displacements=[]
-    displacements_rc=[]
-##    if len(seed_intersection)==0 and :
-##        return seq1, seq2
-    #Check the displacement between the first occurence of each kmer in the subject
-    #versus the query sequence
-    for s in seed_intersection:
-        distance=query.find(s)-subject.find(s)
-        if distance<0:
-            distance=len(query)+distance
-        displacements.append(distance)
-    #Check the displacements in the reverse complement
-    for s in seed_intersection_rc:
-        distance=query_rc.find(s)-subject.find(s)
-        if distance<0:
-            distance=len(query_rc)+distance
-        displacements_rc.append(distance)
-
-    if len (displacements)>0:
-        mode=scipy.stats.mode(displacements)
-        mode, count=mode.mode[0], mode.count[0]
-
-    else: mode,count=0,0
-    if len(displacements_rc)>0:
-        mode_rc=scipy.stats.mode(displacements_rc)
-        mode_rc, count_rc=mode_rc.mode[0], mode_rc.count[0]
-    else:
-        mode_rc,count_rc=0,0
-
-    seed_count=len(set(seeds))
-    for_prop=float(count)/seed_count
-    rev_prop=float(count_rc)/seed_count
-##
-##    if max(for_prop, rev_prop)<.1:
-##        return query, subject
-##    print count, count_rc
-    if len(seed_intersection)>len(seed_intersection_rc):
-        seq1_array, seq2_array=numpy.fromstring( query[mode:]+query[:mode], '|S1'),numpy.fromstring( subject, '|S1')
-    else:
-        seq1_array, seq2_array=numpy.fromstring( query_rc[mode_rc:]+query_rc[:mode_rc], '|S1'),numpy.fromstring( subject, '|S1')
-
-    return ''.join(seq1_array),''.join( seq2_array)# , numpy.mean( seq1_array== seq2_array)
-
-
 def Jaccard(seq1, seq2):
     kmers1=set(GetKMERS(seq1, 8, unbiased=True))
     kmers2=set(GetKMERS(seq2, 8, unbiased=True))
@@ -998,6 +1083,7 @@ def ShiftedIdentity(target, repeat_len):
 
     smoothing_kernel=[1./repeat_len]*repeat_len
     perc_id=scipy.signal.fftconvolve(smoothing_kernel, matches)
+##    perc_id[:repeat_len]*=numpy.arange(1,repeat_len+1,1.)[::-1]/repeat_len
     return perc_id
 
 def LookForSplits(indices):
@@ -1037,17 +1123,20 @@ def ExtractRepeatsOfSize(seq, rpt_len, threshold=.8, plot=False):
         pGC=PercentGC(seq)
     except:
         return []
-##    threshold=DetermineThreshold(rpt_len, gc=pGC)
+    if threshold=='auto':
+        threshold=DetermineThreshold(rpt_len, gc=pGC)
     background_cutoff=DetermineThreshold(rpt_len, .99, pGC)-.05
     mean_id, std_id=ApproximateRandomAlignment(rpt_len,pGC )
     exp_slope=(1.-mean_id)/rpt_len
     print background_cutoff
     identity_signal=ShiftedIdentity(seq, rpt_len)
     if plot==True:
-        pyplot.plot(identity_signal, c='blue')
+        pyplot.plot(identity_signal, c='blue', zorder=0)
+        pyplot.plot([0,len(identity_signal)], [threshold]*2, linestyle=':' ,c='black')
+
 ##    return identity_signal
     high_identity_intervals=IdentifyHighIdentityRegions(identity_signal, threshold)
-##    print high_identity_intervals
+    print high_identity_intervals
     #The intervals identified go from the end of the first repeat in the array
     #to the beginning of the second repeat.
 ##    return high_identity_intervals
@@ -1080,6 +1169,8 @@ def ExtractRepeatsOfSize(seq, rpt_len, threshold=.8, plot=False):
         boundaries.append((begin, end))
         num_rpts=int( (end-begin)/rpt_len)
 
+##        if plot==True:
+##            pyplot.plot([begin,end], [local_cutoff]*2, c='purple', linestyle='--')
         #Now we extend outward until the sequence identity is indistinguishable
         #from random sequence
         offset=int( (background_cutoff-mean_id)/exp_slope)
@@ -1118,10 +1209,10 @@ def ExtractRepeatsOfSize(seq, rpt_len, threshold=.8, plot=False):
 ##        print left_score, right_score
         if left_score>right_score:
             repeats.append(left_repeat)
-            if plot==True: pyplot.scatter(bg_begin, background_cutoff, c='orange', zorder=0)
+            if plot==True: pyplot.scatter(bg_begin, background_cutoff, c='orange', zorder=10)
         else:
             repeats.append(right_repeat)
-            if plot==True: pyplot.scatter(bg_end, background_cutoff, c='orange', zorder=0)
+            if plot==True: pyplot.scatter(bg_end, background_cutoff, c='orange', zorder=10)
 
 
         #We extract the second repeat in the array. The above determination of
@@ -1129,7 +1220,11 @@ def ExtractRepeatsOfSize(seq, rpt_len, threshold=.8, plot=False):
         #juncion to be near the edge of the repeat.
 ##        repeats.append(( seq[repeat_begin:repeat_begin+rpt_len],(repeat_begin,repeat_begin+rpt_len)  ))
 
-##    if plot==True: pyplot.show()
+    if plot==True:
+        pyplot.ylabel('Percent Identity')
+        pyplot.xlabel('Position')
+        pyplot.tick_params('both', direction='in', length=4)
+        pyplot.show()
     return repeats
 
 def GetRepeatsInInterval(seq, period, threshold, masked=None):
@@ -1160,7 +1255,10 @@ def GetRepeatsInInterval(seq, period, threshold, masked=None):
             continue
         checked_rpts.add(rpt)
 
-        identified_rpts, masked, rpt_len=ExtractRepeatFromArray(seq, masked_seq, rpt, threshold=threshold)
+        identified_rpts, masked, rpt_len=ExtractRepeatFromArray(seq, masked_seq, rpt, threshold=threshold, check_for_additional_periods=len(rpt)<300)
+        if len(identified_rpts)==0:
+            print 'empty'
+            identified_rpts, masked, rpt_len=ExtractRepeatFromArray(seq, masked_seq, rpt, threshold=threshold, check_for_additional_periods=True)
     ##            del masked_seq
         masked_seq=''.join( masked)
         for rpt_len in identified_rpts.keys():
@@ -1253,7 +1351,7 @@ def AnalyzeHitsAtPeriod(identity_signal, expected_periodicity, threshold ):
     return hit_length, hit_identity
 
 
-def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_length=30):
+def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_length=30, check_for_additional_periods=False):
 
 
     #Note to self: Want to retain information about their locations
@@ -1289,8 +1387,8 @@ def ExtractRepeatFromArray(sequence, masked_sequence, query, threshold=.8, min_l
 ##    periods_list=FindAdditionalPeriods(identity_signal, distances, len(query), threshold)
     repeat_list={}
 ##    if periods_list==[]: periods_list=[len(query)]
-    possible_periods=ConstructModeTree(identity_signal,.8, plot=False)
-    if len( possible_periods)>0 and len(query)<300:
+    possible_periods=ConstructModeTree(identity_signal,threshold, plot=False)
+    if len( possible_periods)>0 and check_for_additional_periods==True:
         period_list=OrganizePeriods(possible_periods)
         period_list.append((len(query), threshold,3))
     else: period_list=[(len(query), threshold,3)]
@@ -1484,6 +1582,145 @@ def MultipleSequenceAlignment(infile, outfile, maxiters, logfile):
         shutil.rmtree(temp_dir)
         print '\tDone.'
 
+def MultipleSequenceAlignmentLargeSequences(infile, outfile, maxiters, logfile, BLAST='c:/ncbi/blast-2.5.0+/bin/blastn.exe'):
+
+    seq=GetSeq(infile)
+    seq_keys=seq.keys()
+    temp_dir='{0}_temp'.format( '.'.join( infile.split('.')[:-1]))
+    MakeDir(temp_dir)
+    #Split each adjacent entry into a different *.fasta file
+    for i,key in enumerate( seq_keys[1:]):
+        tempfile='{0}/temp_{1}_{2}.fa'.format(temp_dir, i,i+1)
+        handle=open(tempfile, 'w')
+        handle.write('>{0}\n'.format(seq_keys[i]))
+        handle.write('{0}\n'.format(seq[seq_keys[i]]))
+        handle.write('>{0}\n'.format(seq_keys[i+1]))
+        handle.write('{0}\n'.format(seq[seq_keys[i+1]]))
+        handle.close()
+    #Align these files
+    filelist=sorted( os.listdir(temp_dir))
+    for i,f in enumerate( filelist):
+        blastin='{0}/{1}'.format(temp_dir, f)
+        blastout='{0}/{1}_msa.fa'.format(temp_dir,i)
+        m=AlignWithBLAST(blastin, blastout, logfile, blastdir=BLAST, pad=True)
+        os.remove(blastin)
+##        return m
+    #Chain the alignments
+    msa_filelist=sorted( os.listdir(temp_dir), key=lambda x:int( x.split('_')[0]))
+    msa_filelist=['{0}/{1}'.format(temp_dir, f) for f in msa_filelist]
+    chained=ChainAlignments( msa_filelist)
+    outhandle=open(outfile, 'w')
+    for i,s in enumerate( chained):
+        outhandle.write('>{0}\n'.format(i))
+        outhandle.write('{0}\n'.format(''.join(s)))
+    outhandle.close()
+
+def OpenSeq(infile, return_keys=False, split=True):
+    inhandle=open(infile, 'r')
+    parser=SeqIO.parse(infile, 'fasta')
+    seq_list=[]
+    key_list=[]
+    for seq in parser:
+        if split==True:
+            seq_list.append([s for s in str( seq.seq)])
+        else:
+            seq_list.append(str( seq.seq))
+        if return_keys==True:
+            key_list.append(seq.name)
+    inhandle.close()
+    if return_keys==False:
+        return seq_list
+    else:
+        return seq_list, key_list
+def ChainAlignments(file_list):
+    #Open the chain
+    chain_list=OpenSeq(file_list[0])
+    #Continue chain:
+    for f in file_list[1:]:
+        new_seqs=OpenSeq(f)
+        anchor_seq=new_seqs[0]
+        target_seq=chain_list[-1]
+        i=0
+        while i<len(anchor_seq) and i<len(target_seq) and i<100000:
+
+            if anchor_seq[i]!=target_seq[i]:
+                if target_seq[i]=='-':
+                    for j in range( len(new_seqs)):
+                        new_seqs[j].insert(i, '-')
+                    anchor_seq=new_seqs[0]
+                elif anchor_seq[i]=='-':
+                    for j in range( len(chain_list)):
+                        chain_list[j].insert(i, '-')
+                    target_seq=chain_list[-1]
+            i+=1
+    return chain_list
+
+def QuickMatch(query, subject, seed_count=100):
+
+    "Uses a heuristic to match the phase between two sequences."
+##    assert len(seq1)==len(seq2)
+##    if len(seq1)>20:
+    #Determine the reverse complement sequence
+    query_rc=str( Bio.Seq.Seq(query).reverse_complement())
+
+    #Decompose the sequences into sets of 10-mers
+    kmer_set_query=set(GetKMERS(query))
+    kmer_set_rc=set(GetKMERS(query_rc))
+    kmer_set_subject=set(GetKMERS(subject))
+
+    #Choose a random set of 10-mers from teh subject sequence
+##    seeds=numpy.random.choice(list(kmer_set_subject), size=seed_count, replace=True)
+    seeds=kmer_set_subject
+
+    #Get the intersections of the subject and query 10-mers from both the forward
+    #and reverse strands
+    seed_intersection=list( set(seeds)&kmer_set_query)
+    seed_intersection_rc=list( set(seeds)&kmer_set_rc)
+
+    displacements=[]
+    displacements_rc=[]
+##    if len(seed_intersection)==0 and :
+##        return seq1, seq2
+    #Check the displacement between the first occurence of each kmer in the subject
+    #versus the query sequence
+    for s in seed_intersection:
+        distance=query.find(s)-subject.find(s)
+        if distance<0:
+            distance=len(query)+distance
+        displacements.append(distance)
+    #Check the displacements in the reverse complement
+    for s in seed_intersection_rc:
+        distance=query_rc.find(s)-subject.find(s)
+        if distance<0:
+            distance=len(query_rc)+distance
+        displacements_rc.append(distance)
+
+    if len (displacements)>0:
+        mode=scipy.stats.mode(displacements)
+        mode, count=mode.mode[0], mode.count[0]
+
+    else: mode,count=0,0
+    if len(displacements_rc)>0:
+        mode_rc=scipy.stats.mode(displacements_rc)
+        mode_rc, count_rc=mode_rc.mode[0], mode_rc.count[0]
+    else:
+        mode_rc,count_rc=0,0
+
+    seed_count=len(set(seeds))
+    for_prop=float(count)/seed_count
+    rev_prop=float(count_rc)/seed_count
+##
+##    if max(for_prop, rev_prop)<.1:
+##        return query, subject
+##    print count, count_rc
+    if len(seed_intersection)>len(seed_intersection_rc):
+        seq1_array, seq2_array=numpy.fromstring( query[mode:]+query[:mode], '|S1'),numpy.fromstring( subject, '|S1')
+    else:
+        seq1_array, seq2_array=numpy.fromstring( query_rc[mode_rc:]+query_rc[:mode_rc], '|S1'),numpy.fromstring( subject, '|S1')
+
+    return ''.join(seq1_array),''.join( seq2_array)# , numpy.mean( seq1_array== seq2_array)
+
+
 def PhaseSequences(sequences):
     leftmost_ind=numpy.argmin([s.left for s in sequences])
     query_seq=sequences[leftmost_ind].sequence
@@ -1530,6 +1767,7 @@ def SummarizeRepeats(sequences, outfile, log_handle):
     tandem_repeats=[s  for s in sequences if s.tandem_flag]
 
     min_len=min( [abs(s.length) for s in tandem_repeats ])
+    max_len=max( [abs(s.length) for s in tandem_repeats ])
     if len(tandem_repeats)==0: return {}
 
     #Output sequences to *fasta
@@ -1541,7 +1779,10 @@ def SummarizeRepeats(sequences, outfile, log_handle):
     #Run the multiple alignment
     msa_output='{0}_msa.fa'.format(outfile)
     if len(tandem_repeats)>2:
-        MultipleSequenceAlignment(fasta_output, msa_output, 1, log_handle)
+        if max_len<20000:
+            MultipleSequenceAlignment(fasta_output, msa_output, 1, log_handle)
+        else:
+            MultipleSequenceAlignmentLargeSequences()
     else:
         #If the sequences are short, use a small word size
         if min_len<100: word_size=7
@@ -1562,9 +1803,11 @@ def SummarizeRepeats(sequences, outfile, log_handle):
 
     return consensus_dict
 
-def AlignWithBLAST(infile, outfile,log_file, word_size=11, blastdir=BLAST_PATH):
+def AlignWithBLAST(infile, outfile,log_file, word_size=11, blastdir=BLAST_PATH, pad=False):
     sequences=GetSeq(infile)
     seq_keys=sequences.keys()
+    seq_query=sequences[seq_keys[0]]
+    seq_subj=sequences[seq_keys[1]]
     temp_1='{0}_1.fa'.format('.'.join( infile.split('.')[:-1]))
     temp_handle=open(temp_1, 'w')
     temp_handle.write('>{0}\n'.format(seq_keys[0]))
@@ -1585,26 +1828,53 @@ def AlignWithBLAST(infile, outfile,log_file, word_size=11, blastdir=BLAST_PATH):
     os.remove(temp_1)
     os.remove(temp_2)
 
+
     parse_handle=open(temp_out, 'r')
     blast_parser=NCBIXML.parse(parse_handle)
     hsps=blast_parser.next()
     outhandle=open(outfile,'w')
     if len(hsps.alignments)==0: #No alignments found
+        if pad==True:
+            query_name=hsps.query
+            outhandle.write('>{0}\n'.format(seq_keys[0]))
+            outhandle.write('{0}\n'.format(query_seq+'-'*len(subj_seq))
         outhandle.close()
+
         return
 
     query_name=hsps.query
     query_seq=hsps.alignments[0].hsps[0].query
+    if pad==True:
+##        return hsps
+        query_beg=hsps.alignments[0].hsps[0].query_start
+        query_end=hsps.alignments[0].hsps[0].query_end
+        sbjct_beg=hsps.alignments[0].hsps[0].sbjct_start
+        sbjct_end=hsps.alignments[0].hsps[0].sbjct_end
+        query_slice_beg=seq_query[0:query_beg]+'-'*sbjct_beg
+        query_slice_end=seq_query[query_end:]+'-'*(len(seq_subj)-sbjct_end)
+        query_seq=query_slice_beg +query_seq+query_slice_end
+
     outhandle.write('>{0}\n'.format(query_name))
     outhandle.write('{0}\n'.format(query_seq))
 
     subj_name=hsps.alignments[0].hit_id
     subj_seq=hsps.alignments[0].hsps[0].sbjct
+    if pad==True:
+##        return hsps
+        query_beg=hsps.alignments[0].hsps[0].query_start
+        query_end=hsps.alignments[0].hsps[0].query_end
+        sbjct_beg=hsps.alignments[0].hsps[0].sbjct_start
+        sbjct_end=hsps.alignments[0].hsps[0].sbjct_end
+        subj_slice_beg='-'*query_beg+ seq_subj[0:sbjct_beg]
+        subj_slice_end='-'*(len(seq_query)- query_end)+ seq_subj[sbjct_end:]
+        subj_seq=subj_slice_beg+subj_seq+subj_slice_end
+
     outhandle.write('>{0}\n'.format(subj_name))
     outhandle.write('{0}\n'.format(subj_seq))
 
     outhandle.close()
-
+    parse_handle.close()
+    os.remove(temp_out)
 
 
 
@@ -2297,7 +2567,7 @@ def ConstructModeTree(sig, min_identity, cluster_threshold=.1, plot=False ):
     return mode_list
 
 
-def IdentifyPeriods(signal, threshold=.95):
+def IdentifyPeriods(signal, threshold=.95, len_cutoff=3):
     hits=numpy.where(signal>=threshold)[0]
     if len(hits)==0:
         return []
@@ -2306,7 +2576,7 @@ def IdentifyPeriods(signal, threshold=.95):
         return []
     clusters=HierarchicalCluster(distance,.1)
 
-    periods=[( numpy.mean(c), len(c)) for c in clusters if len(c)>4]
+    periods=[( numpy.mean(c), len(c)) for c in clusters if len(c)>=3]
 
     return periods
 
