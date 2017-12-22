@@ -14,11 +14,11 @@ This script is primarily for identifying redundancies in a set of consensus sequ
 
 Usage:
 
-python FindHomology.py -i \<path to input fasta\> -o \<output directory to be created\> -B \<path to the BLAST directory\> -C \<percent identity cutoff\>
+python FindHomology.py -i \<path to input fasta\> -o \<output directory to be created\> -B \<path to the BLASTn application\> -C \<percent identity cutoff\>
   
 For example:
 
-python FindHomology.py -i c:/.../Repbase_19.06_DM_7-8-16.fa -o C:/.../test_communities -B "c:\NCBI\blast-2.5.0+" -C 80
+python FindHomology.py -i c:/.../Repbase_19.06_DM_7-8-16.fa -o C:/.../test_communities -B "c:\NCBI\blast-2.5.0+\bin\blastn.exe" -C 80
 
 Note: It is important that the directory containing the input file does not contain a subdirectory named "/temp", as the function creates and subsequently deletes a temp folder.
  
