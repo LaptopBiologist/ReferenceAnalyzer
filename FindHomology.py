@@ -277,7 +277,7 @@ def BuildGraph(aligned, cutoff):
             graph.add_node(subject)
         if graph.has_node(query)==False:
             graph.add_node(query)
-        if aligned[pair].identity>=cutoff and aligned[pair].covs>80: #aligned[pair].length>100:
+        if aligned[pair].identity>=cutoff:# and aligned[pair].covs>80: #aligned[pair].length>100:
             graph.add_edge(subject, query)
 
     return graph
