@@ -16,7 +16,10 @@ from Bio import Seq
 from Bio.Blast import NCBIXML
 
 import matplotlib
-matplotlib.use('Agg')
+import sys
+if sys.platform[0]=='l':
+    matplotlib.use('Agg')
+
 from matplotlib import pyplot
 from statsmodels.tsa import stattools
 from statsmodels.tsa.stattools import acf
@@ -37,10 +40,10 @@ import os
 import collections
 ##import ReferenceAnalyzer.FindHomology
 ##from FindHomology import ComputeKmerCompositionEntropy
-
+import AddAnnotations
 import gzip
 
-import sys
+
 import shutil
 
 import copy
@@ -293,6 +296,7 @@ def TandemFinder(infile, outdir,muscle_path,blast_path, threshold, minlen=30):
             repeat_count=0
             left_boundary, right_boundary=numpy.inf, 0
             for major_period in repeat_dict.keys():
+                if major_period<minlen: continue
                 if true_intervals.has_key(major_period)==False:
                     true_intervals[major_period]=[]
                 repeat_list=repeat_dict[major_period]
@@ -1610,6 +1614,7 @@ def MultipleSequenceAlignmentLargeSequences(infile, outfile, maxiters, logfile, 
     msa_filelist=['{0}/{1}'.format(temp_dir, f) for f in msa_filelist]
     chained=ChainAlignments( msa_filelist)
     outhandle=open(outfile, 'w')
+    print chained
     for i,s in enumerate( chained):
         outhandle.write('>{0}\n'.format(i))
         outhandle.write('{0}\n'.format(''.join(s)))
@@ -1653,6 +1658,7 @@ def ChainAlignments(file_list):
                         chain_list[j].insert(i, '-')
                     target_seq=chain_list[-1]
             i+=1
+        chain_list+=new_seqs
     return chain_list
 
 def QuickMatch(query, subject, seed_count=100):
@@ -1782,7 +1788,7 @@ def SummarizeRepeats(sequences, outfile, log_handle):
         if max_len<20000:
             MultipleSequenceAlignment(fasta_output, msa_output, 1, log_handle)
         else:
-            MultipleSequenceAlignmentLargeSequences()
+            MultipleSequenceAlignment(fasta_output, msa_output, 1, log_handle)
     else:
         #If the sequences are short, use a small word size
         if min_len<100: word_size=7
@@ -1803,11 +1809,119 @@ def SummarizeRepeats(sequences, outfile, log_handle):
 
     return consensus_dict
 
-def AlignWithBLAST(infile, outfile,log_file, word_size=11, blastdir=BLAST_PATH, pad=False):
+def MatchSequences(seq1, seq2):
+    i=0
+    seq1=[s for s in seq1]
+    seq2=[s for s in seq2]
+    matched_seq1=[]
+    matched_seq2=[]
+    count=0
+    terminate=False
+    insert_in_seq1=[]
+    insert_in_seq2=[]
+    while terminate==False and count<100:
+        count+=1
+        if i>=len(seq1)-1 or i>=len(seq2)-1: break
+        if seq1[i]==seq2[i]:
+            i+=1
+        if seq1[i]!=seq2[i]:
+            if seq1[i]=='-':
+                seq2.insert(i,'-')
+                insert_in_seq2.append(i)
+            elif seq2[i]=='-':
+                seq1.insert(i,'-')
+                insert_in_seq1.append(i)
+    if  len(seq1)!=len(seq2):
+        if len(seq1)<len(seq2):
+            diff=(len(seq2)-len(seq1))
+            insert_in_seq1+=[-1]*diff
+            seq1+='-'*diff
+        else:
+            diff=(len(seq1)-len(seq2))
+            insert_in_seq2+=[-1]*diff
+            seq2+='-'*diff
+    print i, count
+    return ''.join(seq1),''.join( seq2)
+
+##
+##def AlignWithBLAST(infile, outfile,log_file, word_size=11, blastdir=BLAST_PATH, pad=False):
+##    sequences, seq_keys=OpenSeq(infile, True, False)
+##
+##    seq_query=sequences[0]
+##    seq_subj=sequences[1]
+##    temp_1='{0}_1.fa'.format('.'.join( infile.split('.')[:-1]))
+##    temp_handle=open(temp_1, 'w')
+##    temp_handle.write('>{0}\n'.format(seq_keys[0]))
+##    temp_handle.write('{0}\n'.format( seq_query))
+##    temp_handle.close()
+##
+##    temp_2='{0}_2.fa'.format('.'.join( infile.split('.')[:-1]))
+##    temp_handle=open(temp_2, 'w')
+##    temp_handle.write('>{0}\n'.format(seq_keys[1]))
+##    temp_handle.write('{0}\n'.format( seq_subj))
+##    temp_handle.close()
+##
+##    #Align the temporary files
+##    temp_out='{0}_temp.xml'.format('.' .join(outfile.split('.')[:-1]))
+##    BlastSequences(temp_1, temp_2, temp_out, blastdir,word_size, log_file)
+##
+##    #Delete the temporary files
+##    os.remove(temp_1)
+##    os.remove(temp_2)
+##
+##
+##    parse_handle=open(temp_out, 'r')
+##    blast_parser=NCBIXML.parse(parse_handle)
+##    hsps=blast_parser.next()
+##    outhandle=open(outfile,'w')
+##    if len(hsps.alignments)==0: #No alignments found
+##        if pad==True:
+##            query_name=hsps.query
+##            outhandle.write('>{0}\n'.format(seq_keys[0]))
+##            outhandle.write('{0}\n'.format(query_seq+'-'*len(subj_seq)))
+##        outhandle.close()
+##
+##        return
+##
+##    query_name=hsps.query
+##    query_seq=hsps.alignments[0].hsps[0].query
+##    if pad==True:
+####        return hsps
+##        query_beg=hsps.alignments[0].hsps[0].query_start
+##        query_end=hsps.alignments[0].hsps[0].query_end
+##        sbjct_beg=hsps.alignments[0].hsps[0].sbjct_start
+##        sbjct_end=hsps.alignments[0].hsps[0].sbjct_end
+##        query_slice_beg=seq_query[0:query_beg]+'-'*sbjct_beg
+##        query_slice_end=seq_query[query_end:]+'-'*(len(seq_subj)-sbjct_end)
+##        query_seq=query_slice_beg +query_seq+query_slice_end
+##
+##    outhandle.write('>{0}\n'.format(query_name))
+##    outhandle.write('{0}\n'.format(query_seq))
+##
+##    subj_name=hsps.alignments[0].hit_id
+##    subj_seq=hsps.alignments[0].hsps[0].sbjct
+##    if pad==True:
+####        return hsps
+##        query_beg=hsps.alignments[0].hsps[0].query_start
+##        query_end=hsps.alignments[0].hsps[0].query_end
+##        sbjct_beg=hsps.alignments[0].hsps[0].sbjct_start
+##        sbjct_end=hsps.alignments[0].hsps[0].sbjct_end
+##        subj_slice_beg='-'*query_beg+ seq_subj[0:sbjct_beg]
+##        subj_slice_end='-'*(len(seq_query)- query_end)+ seq_subj[sbjct_end:]
+##        subj_seq=subj_slice_beg+subj_seq+subj_slice_end
+##
+##    outhandle.write('>{0}\n'.format(subj_name))
+##    outhandle.write('{0}\n'.format(subj_seq))
+##
+##    outhandle.close()
+##    parse_handle.close()
+##    os.remove(temp_out)
+##
+##
+
+def AlignWithBLAST(infile, outfile,log_file, word_size=11, blastdir=BLAST_PATH):
     sequences=GetSeq(infile)
     seq_keys=sequences.keys()
-    seq_query=sequences[seq_keys[0]]
-    seq_subj=sequences[seq_keys[1]]
     temp_1='{0}_1.fa'.format('.'.join( infile.split('.')[:-1]))
     temp_handle=open(temp_1, 'w')
     temp_handle.write('>{0}\n'.format(seq_keys[0]))
@@ -1828,56 +1942,28 @@ def AlignWithBLAST(infile, outfile,log_file, word_size=11, blastdir=BLAST_PATH, 
     os.remove(temp_1)
     os.remove(temp_2)
 
-
     parse_handle=open(temp_out, 'r')
     blast_parser=NCBIXML.parse(parse_handle)
     hsps=blast_parser.next()
     outhandle=open(outfile,'w')
     if len(hsps.alignments)==0: #No alignments found
-        if pad==True:
-            query_name=hsps.query
-            outhandle.write('>{0}\n'.format(seq_keys[0]))
-            outhandle.write('{0}\n'.format(query_seq+'-'*len(subj_seq))
         outhandle.close()
-
         return
 
     query_name=hsps.query
     query_seq=hsps.alignments[0].hsps[0].query
-    if pad==True:
-##        return hsps
-        query_beg=hsps.alignments[0].hsps[0].query_start
-        query_end=hsps.alignments[0].hsps[0].query_end
-        sbjct_beg=hsps.alignments[0].hsps[0].sbjct_start
-        sbjct_end=hsps.alignments[0].hsps[0].sbjct_end
-        query_slice_beg=seq_query[0:query_beg]+'-'*sbjct_beg
-        query_slice_end=seq_query[query_end:]+'-'*(len(seq_subj)-sbjct_end)
-        query_seq=query_slice_beg +query_seq+query_slice_end
-
     outhandle.write('>{0}\n'.format(query_name))
     outhandle.write('{0}\n'.format(query_seq))
 
     subj_name=hsps.alignments[0].hit_id
     subj_seq=hsps.alignments[0].hsps[0].sbjct
-    if pad==True:
-##        return hsps
-        query_beg=hsps.alignments[0].hsps[0].query_start
-        query_end=hsps.alignments[0].hsps[0].query_end
-        sbjct_beg=hsps.alignments[0].hsps[0].sbjct_start
-        sbjct_end=hsps.alignments[0].hsps[0].sbjct_end
-        subj_slice_beg='-'*query_beg+ seq_subj[0:sbjct_beg]
-        subj_slice_end='-'*(len(seq_query)- query_end)+ seq_subj[sbjct_end:]
-        subj_seq=subj_slice_beg+subj_seq+subj_slice_end
-
     outhandle.write('>{0}\n'.format(subj_name))
     outhandle.write('{0}\n'.format(subj_seq))
 
     outhandle.close()
+
     parse_handle.close()
     os.remove(temp_out)
-
-
-
 
 def BlastSequences(query,subject,outfile,blastdir, word_size, logfile):
     errhandle=open(logfile, 'a')
@@ -2694,6 +2780,49 @@ def DetermineThreshold(length, alpha_cutoff=.99999, gc=.4):
     mu,sig=ApproximateRandomAlignment(length, gc)
     threshold=scipy.stats.norm.ppf(alpha_cutoff, mu,sig)
     return threshold+.05
+
+
+def LoadAnnotations(infile):
+    annot_dict={}
+    inhandle=open(infile, 'r')
+    intable=csv.reader(inhandle, delimiter='\t')
+    header=intable.next()
+    for row in intable:
+        line=AddAnnotations.TandemLine(row)
+        if annot_dict.has_key(line.chrom)==False:
+            annot_dict[line.chrom]={}
+        if annot_dict[line.chrom].has_key(line.rpt_length)==False:
+            annot_dict[line.chrom][line.rpt_length]=[]
+        annot_dict[line.chrom][line.rpt_length].append((line.starts, line.ends))
+    return annot_dict
+
+def PlotAnnotations(annot_dict, chrom):
+    colors=matplotlib.colors.cnames.keys()
+    white=[]
+##    pyplot.close()
+    ax=pyplot.subplot(212)
+    for c in colors:
+        if c.find('white')!=-1 or c.find('black')!=-1:
+            white.append(c)
+    colors=list(set(colors)-set(white))
+    numpy.random.shuffle(colors)
+    count=0
+    pos_list=[]
+    CN_list=[]
+
+    for period in annot_dict[chrom].keys():
+
+        for s,e in annot_dict[chrom][period]:
+            count+=1
+            pos_list+=[numpy.mean(s)]
+            CN_list.append( len(s))
+            for i in range(len(s)):
+                pyplot.plot([s[i], e[i]],[period]*2, c=colors[count%len(colors)],lw=2 )
+    pyplot.subplot(211, sharex=ax)
+##    seaborn.distplot(pos_list, bins=2000, kde=False)
+    pyplot.scatter(pos_list, CN_list, s=10 )
+    pyplot.show()
+
 
 
 def main(argv):
