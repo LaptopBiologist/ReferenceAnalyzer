@@ -311,6 +311,7 @@ def ExtractFASTAs(annot_file, outfile):
     count=0
     for row in intable:
         line=TandemLine(row)
+        if int( line.rpt_length)==0: continue
         if len(line.repeat.keys())>0: count+=1
         if count%20==0:
             print line.repeat
@@ -320,14 +321,15 @@ def ExtractFASTAs(annot_file, outfile):
             name=keys[numpy.argmax(values)]
             seq_name='>{0}_Name={1}_CN={2}_Length={3}_Identity={4}_Rpt={5}_method={6}_Chr={7}:{8}-{9}\n'.format(line.id,\
             name, line.copynumber, line.rpt_length, line.identity, line.repetition, line.method, line.chrom,\
-            '{:,}'.format( line.start), '{:,}'.format( line.start))
+            line.start,  line.end)
             gene_handle.write(seq_name)
             gene_handle.write('{0}\n'.format(line.seq))
         elif line.repeat.has_key('ALR/Alpha'):
+            if int( line.copynumber)<=15: continue
             name='ALR/Alpha'
             seq_name='>{0}_CN={2}_Length={3}_Identity={4}_Rpt={5}_method={6}_Name={1}_Chr={7}:{8}-{9}\n'.format(line.id,\
             name, line.copynumber, line.rpt_length, line.identity, line.repetition, line.method, line.chrom,\
-            '{:,}'.format( line.start), '{:,}'.format( line.start))
+            line.start,  line.end)
             alpha_handle.write(seq_name)
             alpha_handle.write('{0}\n'.format(line.seq))
         else:
@@ -336,7 +338,7 @@ def ExtractFASTAs(annot_file, outfile):
             else: name='Complex'
             seq_name='>{0}_Name={1}_CN={2}_Length={3}_Identity={4}_Rpt={5}_method={6}_Chr={7}:{8}-{9}\n'.format(line.id,\
             name, line.copynumber, line.rpt_length, line.identity, line.repetition, line.method, line.chrom,\
-            '{:,}'.format( line.start), '{:,}'.format( line.start))
+            line.start,  line.end)
             rpt_handle.write(seq_name)
             rpt_handle.write('{0}\n'.format(line.seq))
 

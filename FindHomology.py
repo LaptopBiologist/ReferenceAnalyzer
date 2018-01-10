@@ -91,7 +91,7 @@ def ClusterIndexByLength(index, outDir, BlastDir, cutoff=85):
         ClusterIndex(infile, outfile, BlastDir, cutoff=80)
 
 
-def ClusterIndex(index, outDir, BlastDir, cutoff=85):
+def ClusterIndex(index, outDir, BlastDir, cutoff=85, coverage_req=0):
 
     #Split the index into files containing 300 seq.
     inDir='/'.join(index.split('/')[:-1])
@@ -103,7 +103,11 @@ def ClusterIndex(index, outDir, BlastDir, cutoff=85):
     fileList=os.listdir(tempDir)
 
     for j in range(len(fileList)):
-        for i in range(j+1):
+        if coverage_req==0:
+            I=j+1
+        else:
+            I=len(fileList)
+        for i in range(I):
             print fileList[j], fileList[i]
             outname='alignments_{0}_{1}.tsv'.format(str(i), str(j))
             outfiles.append( BlastSeq_part(tempDir+'/'+ fileList[j],tempDir+'/'+ fileList[i], outDir, outname, BlastDir))
@@ -112,7 +116,7 @@ def ClusterIndex(index, outDir, BlastDir, cutoff=85):
 
 
     aligned=ParseSequences(AlignmentFile)
-    graph=BuildGraph(aligned, cutoff)
+    graph=BuildGraph(aligned, cutoff, coverage_req)
     clusters=GraphToCommunities(graph)
     groups, singletons=RemoveSingletons(clusters)
 
@@ -196,7 +200,7 @@ def BlastSeq(Query, Subject, Out, BlastDir):
     print (OutPath)
     errlog=open(OutPath+'/_err.log', 'a')
     column_spec='10 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue btop'
-    BLAST=subprocess.Popen([BlastDir+'/bin/blastn', '-query',Query, '-subject',Subject, '-outfmt', column_spec,  '-out', OutFile], stderr=errlog)
+    BLAST=subprocess.Popen([BlastDir, '-query',Query, '-subject',Subject, '-outfmt', column_spec,  '-out', OutFile], stderr=errlog)
     BLAST.communicate()
     errlog.close()
     return OutFile
@@ -208,7 +212,7 @@ def BlastSeq_part(Query, Subject, OutPath, outname, BlastDir):
     print (OutPath)
     errlog=open(OutPath+'/_err.log', 'a')
     column_spec='10 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue qcovs btop'
-    BLAST=subprocess.Popen([BlastDir+'/bin/blastn', '-query',Query, '-subject',Subject, '-outfmt', column_spec,  '-out', OutFile], stderr=errlog)
+    BLAST=subprocess.Popen([BlastDir, '-query',Query, '-subject',Subject, '-outfmt', column_spec,  '-out', OutFile], stderr=errlog)
     BLAST.communicate()
     errlog.close()
     return OutFile
@@ -249,6 +253,7 @@ def BlastSeqII(Query, Subject, Out, name, BlastDir):
     return OutFile
 
 
+
 def ParseSequences(InFile):
     """Organizes the BLAST output and stores the information in python's working
      memory."""
@@ -263,7 +268,7 @@ def ParseSequences(InFile):
     return(pairDict)
 
 
-def BuildGraph(aligned, cutoff):
+def BuildGraph(aligned, cutoff, coverage_req=0):
     """Takes the BLAST output and represents it as a graph using the following rules:
         Each sequence is represented as a node.
         Each alignment between sequences is represented as an unweighted,
@@ -277,7 +282,7 @@ def BuildGraph(aligned, cutoff):
             graph.add_node(subject)
         if graph.has_node(query)==False:
             graph.add_node(query)
-        if aligned[pair].identity>=cutoff:# and aligned[pair].covs>80: #aligned[pair].length>100:
+        if aligned[pair].identity>=cutoff and aligned[pair].covs>coverage_req: #aligned[pair].length>100:
             graph.add_edge(subject, query)
 
     return graph
@@ -578,6 +583,14 @@ def LabelFastaWithEntropy(infile, outfile):
         outhandle.write('{0}\n'.format(seqs[key]))
     outhandle.close()
 
+def LoadGraph(infile, blastdir,cutoff, cvg):
+    outpath='/'.join(infile.split('/')[:-1])
+    outroot='.'.join( infile.split('/')[-1].split('.')[:-1])+'_temp.csv'
+    BlastSeq_part(infile, infile, outpath, outroot, blastdir)
+    seq=ParseSequences(outpath+'/'+outroot)
+    graph=BuildGraph(seq, cutoff, cvg)
+    return graph
+
 
 def main(argv):
     param={}
@@ -594,7 +607,11 @@ def main(argv):
         cutoff=float( param['-C'])
     else:
         cutoff=.8
-    ClusterIndex(inDir, outDir, blast_path, cutoff)
+    if param.has_key('-cvg')==True:
+        cvg_req=float( param['-cvg'])
+    else:
+        cvg_req=0
+    ClusterIndex(inDir, outDir, blast_path, cutoff, cvg_req)
     pass
 
 if __name__ == '__main__':
